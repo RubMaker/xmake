@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        target.lua
@@ -92,18 +92,11 @@ function _match_sourcebatches(target, filepatterns)
     end
 end
 
--- add targetjobs and deps orders
-function _add_targetjobs_orders(jobgraph, target, dep, opt)
+-- add plain orders for targetjobs and deps
+function _add_targetjobs_plain_orders(jobgraph, target, dep, opt)
     local jobname, jobname_dep
     local job_kind = opt.job_kind
-    if dep:policy("build.fence") or dep:policy("build.across_targets_in_parallel") == false then
-        jobname = string.format("%s/begin_%s", target:fullname(), job_kind)
-        jobname_dep = string.format("%s/end_%s", dep:fullname(), job_kind)
-        -- build.across_targets_in_parallel is deprecated
-        if dep:policy("build.across_targets_in_parallel") == false then
-            wprint("policy(\"build.across_targets_in_parallel\") has been deprecated, please use policy(\"build.fence\") instead of it.")
-        end
-    elseif job_kind == "build" then
+    if job_kind == "build" then
         jobname = target:fullname() .. "/link"
         jobname_dep = dep:fullname() .. "/link"
         if not jobgraph:has(jobname) then
@@ -118,16 +111,33 @@ function _add_targetjobs_orders(jobgraph, target, dep, opt)
     end
 end
 
+-- add deep orders for targetjobs and deps
+function _add_targetjobs_deep_orders(jobgraph, target, dep, opt)
+    local jobname, jobname_dep
+    local job_kind = opt.job_kind
+    if dep:policy("build.fence") or dep:policy("build.across_targets_in_parallel") == false then
+        jobname = string.format("%s/begin_%s", target:fullname(), job_kind)
+        jobname_dep = string.format("%s/end_%s", dep:fullname(), job_kind)
+        -- build.across_targets_in_parallel is deprecated
+        if dep:policy("build.across_targets_in_parallel") == false then
+            wprint("policy(\"build.across_targets_in_parallel\") has been deprecated, please use policy(\"build.fence\") instead of it.")
+        end
+    end
+    if jobname and jobname_dep and jobgraph:has(jobname) and jobgraph:has(jobname_dep) then
+        jobgraph:add_orders(jobname_dep, jobname)
+    end
+end
+
 -- add target jobs for the builtin script
 function add_targetjobs_for_builtin_script(jobgraph, target, opt)
     opt = opt or {}
-    local job_kind = opt.job_kind
+    local job_kind = opt.job_kind or "build"
     if target:is_static() or target:is_binary() or target:is_shared() or target:is_object() or target:is_moduleonly() then
         if job_kind == "prepare" then
             import("private.action.build.prepare_files", {anonymous = true})(jobgraph, target, opt)
         elseif job_kind == "link" then
             import("private.action.build.link_objects", {anonymous = true})(jobgraph, target, opt)
-        else
+        elseif job_kind == "build" then
             import("private.action.build.build_" .. target:kind(), {anonymous = true})(jobgraph, target, opt)
         end
     end
@@ -138,6 +148,7 @@ function add_targetjobs_for_script(jobgraph, target, instance, opt)
     opt = opt or {}
     local has_script = false
     local buildcmds = opt.buildcmds
+    local job_opt = opt.job_opt
     local job_prefix = target:fullname()
     if target == instance then
         job_prefix = job_prefix .. "/target"
@@ -169,7 +180,7 @@ function add_targetjobs_for_script(jobgraph, target, instance, opt)
                 --     end)
                 local jobname = string.format("%s/%s", job_prefix, script_name)
                 jobgraph:add(jobname, function (index, total, opt)
-                    script(target, {progress = opt.progress})
+                    script(target, table.join({progress = opt.progress}, job_opt))
                 end)
             end
             has_script = true
@@ -193,7 +204,7 @@ function add_targetjobs_for_script(jobgraph, target, instance, opt)
                     scriptcmd(target, buildcmds, {progress = opt.progress})
                 else
                     local batchcmds_ = batchcmds.new({target = target})
-                    scriptcmd(target, batchcmds_, {progress = opt.progress})
+                    scriptcmd(target, batchcmds_, table.join({progress = opt.progress}, job_opt))
                     batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                 end
             end)
@@ -227,13 +238,20 @@ function add_targetjobs_with_stage(jobgraph, target, stage, opt)
             table.insert(instances, ruleinst)
         end
     end
+    -- on_config is different from on_build/on_prepare,
+    -- it does not rewrite all rules, and target.on_config needs to be called last.
+    if job_kind == "config" then
+        instances = table.slice(instances, 2)
+        table.insert(instances, target)
+    end
     local jobsize = jobgraph:size()
     jobgraph:group(group_name, function ()
         local has_script = false
         local script_opt = {
             script_name = script_name,
             scriptcmd_name = scriptcmd_name,
-            buildcmds = opt.buildcmds
+            buildcmds = opt.buildcmds,
+            job_opt = opt.job_opt
         }
         for _, instance in ipairs(instances) do
             -- we need to use this group to sort rule scripts with add_orders
@@ -280,6 +298,7 @@ function add_targetjobs(jobgraph, target, opt)
 
     local buildcmds = opt.buildcmds
     local job_kind = opt.job_kind
+    local for_generator = opt.for_generator
     local job_begin = string.format("%s/begin_%s", target:fullname(), job_kind)
     local job_end = string.format("%s/end_%s", target:fullname(), job_kind)
     jobgraph:add(job_begin, function (index, total, opt)
@@ -305,7 +324,7 @@ function add_targetjobs(jobgraph, target, opt)
         end
 
         -- clean target first if rebuild
-        if job_kind == "prepare" and target:is_rebuilt() and not option.get("dry-run") then
+        if job_kind == "prepare" and target:is_rebuilt() and not for_generator and not option.get("dry-run") then
             _clean_target(target)
         end
     end)
@@ -352,7 +371,13 @@ function add_targetjobs_and_deps(jobgraph, target, targetrefs, opt)
         for _, depname in ipairs(target:get("deps")) do
             local dep = project.target(depname, {namespace = target:namespace()})
             add_targetjobs_and_deps(jobgraph, dep, targetrefs, opt)
-            _add_targetjobs_orders(jobgraph, target, dep, opt)
+            _add_targetjobs_plain_orders(jobgraph, target, dep, opt)
+        end
+
+        -- we need to pass to the whole dependency chain
+        -- @see https://github.com/xmake-io/xmake/issues/6586
+        for _, dep in ipairs(target:orderdeps()) do
+            _add_targetjobs_deep_orders(jobgraph, target, dep, opt)
         end
     end
 end
@@ -498,12 +523,12 @@ function add_filejobs_for_script(jobgraph, target, instance, sourcebatch, opt)
                         scriptcmd_file(target, buildcmds, sourcefile, {progress = opt.progress, sourcekind = sourcekind})
                     end
                 else
-                    local batchcmds_ = batchcmds.new({target = target})
                     local sourcekind = sourcebatch.sourcekind
                     for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
+                        local batchcmds_ = batchcmds.new({target = target})
                         scriptcmd_file(target, batchcmds_, sourcefile, {progress = opt.progress, sourcekind = sourcekind, distcc = distcc})
+                        batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                     end
-                    batchcmds_:runcmds({changed = target:is_rebuilt(), dryrun = option.get("dry-run")})
                 end
             end)
             has_script = true
@@ -722,13 +747,14 @@ function get_root_targets(targetnames, opt)
             end
         end
     else
+        local all = opt.all
         local group_pattern = opt.group_pattern
         local depset = hashset.new()
         local targets = {}
         for _, target in ipairs(project.ordertargets()) do
             if target:is_enabled() then
                 local group = target:get("group")
-                if (target:is_default() and not group_pattern) or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
+                if (target:is_default() and not group_pattern) or all or option.get("all") or (group_pattern and group and group:match(group_pattern)) then
                     for _, depname in ipairs(target:get("deps")) do
                         depset:insert(depname)
                     end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        package.lua
@@ -1256,7 +1256,6 @@ function _get_package_compatkey(dep)
             table.sort(configs_order)
             key = key .. ":" .. string.serialize(configs_order, true)
         end
-
     end
     return key
 end

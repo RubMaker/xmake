@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      xq114
 -- @file        vsutils.lua
@@ -52,3 +52,7 @@ function vsarch(arch)
     return arch
 end
 
+-- translate file path (with namespace characters '::', it's invalid path characters on windows)
+function translate_path(filepath)
+    return (filepath:gsub("::", "#"))
+end

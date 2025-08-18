@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -22,12 +22,14 @@ rule("qt.moc")
     add_deps("qt.env")
     add_orders("qt.ui", "qt.moc")
     set_extensions(".h", ".hpp")
-    before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
-        import("core.tool.compiler")
+
+    on_config(function (target)
         import("lib.detect.find_file")
 
-        -- get moc
+        -- get qt
         local qt = assert(target:data("qt"), "Qt not found!")
+
+        -- get moc
         local search_dirs = {}
         if qt.bindir_host then table.insert(search_dirs, qt.bindir_host) end
         if qt.bindir then table.insert(search_dirs, qt.bindir) end
@@ -35,6 +37,15 @@ rule("qt.moc")
         if qt.libexecdir then table.insert(search_dirs, qt.libexecdir) end
         local moc = find_file(is_host("windows") and "moc.exe" or "moc", search_dirs)
         assert(moc and os.isexec(moc), "moc not found!")
+
+        -- save moc
+        target:data_set("qt.moc", moc)
+    end)
+
+    before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
+        import("core.tool.compiler")
+
+        local moc = target:data("qt.moc")
 
         -- get c++ source file for moc
         --

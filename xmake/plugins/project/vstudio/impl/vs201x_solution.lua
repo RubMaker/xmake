@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs201x_solution.lua
@@ -22,6 +22,7 @@
 import("core.project.project")
 import("vsfile")
 import("vsutils")
+import("private.utils.target", {alias = "target_utils"})
 
 -- make header
 function _make_header(slnfile, vsinfo)
@@ -36,7 +37,8 @@ function _make_projects(slnfile, vsinfo)
     local groups = {}
     local targets = {}
     local vctool = "8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942"
-    for targetname, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in table.orderpairs(project_targets) do
         -- we need to set startup project for default or binary target
         -- @see https://github.com/xmake-io/xmake/issues/1249
         if target:get("default") == true then
@@ -99,7 +101,8 @@ function _make_global(slnfile, vsinfo)
 
     -- add project configuration platforms
     slnfile:enter("GlobalSection(ProjectConfigurationPlatforms) = postSolution")
-    for targetname, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in table.orderpairs(project_targets) do
         for _, mode in ipairs(vsinfo.modes) do
             for _, arch in ipairs(vsinfo.archs) do
                 local vs_arch = vsutils.vsarch(arch)
@@ -118,7 +121,7 @@ function _make_global(slnfile, vsinfo)
     -- add project groups
     slnfile:enter("GlobalSection(NestedProjects) = preSolution")
     local subgroups = {}
-    for targetname, target in table.orderpairs(project.targets()) do
+    for targetname, target in table.orderpairs(project_targets) do
         local group_path = target:get("group")
         if group_path then
             -- target -> group

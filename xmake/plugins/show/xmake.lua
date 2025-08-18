@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -29,6 +29,7 @@ task("show")
                 values = function (complete, opt)
                     return import("list").lists()
                 end},
+            {'g', "group",  "kv", nil,   "Filter targets by the given group name."},
             {nil, "json",   "k",  false, "Show information with json format."},
             {'t', "target", "kv", nil,   "Show the information of the given target.",
                 values = function (complete, opt)

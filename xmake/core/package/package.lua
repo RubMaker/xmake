@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        package.lua
@@ -2160,7 +2160,7 @@ function _instance:fetch_librarydeps()
     if not fetchinfo then
         return
     end
-    fetchinfo = table.copy(fetchinfo) -- avoid the cached fetchinfo be modified
+    fetchinfo = table.clone(fetchinfo, 3) -- avoid the cached fetchinfo be modified
     local librarydeps = self:librarydeps()
     if librarydeps then
         for _, dep in ipairs(librarydeps) do
@@ -2279,7 +2279,12 @@ end
 function _instance:resourcedir(name)
     local resource = self:resource(name)
     if resource and resource.url then
-        return path.join(self:cachedir(), "resources", name, (path.filename(resource.url):gsub("%?.+$", "")) .. ".dir")
+        local resourceurl = resource.url
+        local resourcedir = path.join(self:cachedir(), "resources", name, (path.filename(resourceurl):gsub("%?.+$", "")))
+        if not resourceurl:startswith("git://") and not resourceurl:endswith(".git") then
+            resourcedir = resourcedir .. ".dir"
+        end
+        return resourcedir
     end
 end
 
@@ -2431,7 +2436,8 @@ function _instance:_generate_sanitizer_configs(checkmode, sourcekind)
     end
 
     -- add ldflags and shflags
-    if self:has_tool("ld", "link", "clang", "clangxx", "gcc", "gxx") then
+    -- msvc does not have an fsanitize linker flag, so the 'link' tool is excluded
+    if self:has_tool("ld", "clang", "clangxx", "gcc", "gxx") then
         configs.ldflags = "-fsanitize=" .. checkmode
         configs.shflags = "-fsanitize=" .. checkmode
     end

@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki, Arthapz
 -- @file        mapper.lua
@@ -80,21 +80,23 @@ function feed(target, modules, sourcefiles)
     -- replace target reused module by dep module
     if reuse then
         for _, sourcefile in ipairs(sourcefiles) do
-            local external = support.is_external(target, sourcefile)
-            if external then
+            local from_dep = support.is_from_dep(target, sourcefile)
+            if from_dep then
                 local reused, from = support.is_reused(target, sourcefile)
                 if reused then
                     local module = get(from, sourcefile)
-                    mapper[module.name] =  module
-                    for dep_name, dep_module in pairs(module.deps) do
-                        if dep_module.headerunit then
-                            local key = dep_name .. dep_module.key
-                            mapper[key] = get(from, key)
-                            local sourcefile = mapper[key].sourcefile
-                            mapper[sourcefile .. dep_module.key] = table.clone(mapper[key])
-                            mapper[sourcefile .. dep_module.key].alias = false
-                        end
-                    end
+                    if module.name then
+		                    mapper[module.name] =  module
+		                    for dep_name, dep_module in pairs(module.deps) do
+		                        if dep_module.headerunit then
+		                            local key = dep_name .. dep_module.key
+		                            mapper[key] = get(from, key)
+		                            local sourcefile = mapper[key].sourcefile
+		                            mapper[sourcefile .. dep_module.key] = table.clone(mapper[key])
+		                            mapper[sourcefile .. dep_module.key].alias = false
+		                        end
+		                    end
+	                  end
                 end
             end
         end

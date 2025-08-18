@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        cmake.lua
@@ -227,7 +227,7 @@ function _get_cxxflags(package, opt)
     table.join2(result, package:config("cxxflags"))
     table.join2(result, package:config("cxflags"))
     if opt.cxxflags then
-        table.join2(result, opt.cflags)
+        table.join2(result, opt.cxxflags)
     end
     if opt.cxflags then
         table.join2(result, opt.cxflags)
@@ -458,12 +458,15 @@ function _get_configs_for_windows(package, configs, opt)
         end
     end
 
-    -- use clang-cl
+    -- use clang-cl or clang, and we need pass --target=xxx flags
     if package:has_tool("cc", "clang", "clang_cl") then
         envs.CMAKE_C_COMPILER = _translate_bin_path(package:build_getenv("cc"))
+        -- @see https://github.com/xmake-io/xmake-repo/issues/7662
+        envs.CMAKE_C_FLAGS    = _get_cflags(package, {cross = true})
     end
     if package:has_tool("cxx", "clang", "clang_cl") then
         envs.CMAKE_CXX_COMPILER = _translate_bin_path(package:build_getenv("cxx"))
+        envs.CMAKE_CXX_FLAGS    = _get_cxxflags(package, {cross = true})
     end
 
     -- we maybe need patch `cmake_policy(SET CMP0091 NEW)` to enable this argument for some packages
@@ -592,7 +595,10 @@ function _get_configs_for_mingw(package, configs, opt)
     envs.CMAKE_SYSTEM_PROCESSOR    = _get_cmake_system_processor(package)
     -- avoid find and add system include/library path
     -- @see https://github.com/xmake-io/xmake/issues/2037
-    envs.CMAKE_FIND_ROOT_PATH      = sdkdir
+    -- https://github.com/xmake-io/xmake/issues/6660
+    if sdkdir and sdkdir ~= "/usr" then
+        envs.CMAKE_FIND_ROOT_PATH = sdkdir
+    end
     envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "BOTH"
@@ -626,6 +632,15 @@ function _get_configs_for_wasm(package, configs, opt)
             end
         end
     end
+
+    -- pass toolchain flags cross-compilation
+    -- @see https://github.com/xmake-io/xmake/issues/6690
+    envs.CMAKE_C_FLAGS             = _get_cflags(package, {cross = true})
+    envs.CMAKE_CXX_FLAGS           = _get_cxxflags(package, {cross = true})
+    envs.CMAKE_ASM_FLAGS           = _get_asflags(package, {cross = true})
+    envs.CMAKE_EXE_LINKER_FLAGS    = _get_ldflags(package, {cross = true})
+    envs.CMAKE_SHARED_LINKER_FLAGS = _get_shflags(package, {cross = true})
+    envs.CMAKE_MODULE_LINKER_FLAGS = _get_shflags(package, {cross = true})
 
     -- avoid find and add system include/library path
     -- @see https://github.com/xmake-io/xmake/issues/5577
@@ -689,7 +704,10 @@ function _get_configs_for_cross(package, configs, opt)
     end
     -- avoid find and add system include/library path
     -- @see https://github.com/xmake-io/xmake/issues/2037
-    envs.CMAKE_FIND_ROOT_PATH              = sdkdir
+    -- https://github.com/xmake-io/xmake/issues/6660
+    if sdkdir and sdkdir ~= "/usr" then
+        envs.CMAKE_FIND_ROOT_PATH = sdkdir
+    end
     envs.CMAKE_FIND_ROOT_PATH_MODE_PACKAGE = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_LIBRARY = "BOTH"
     envs.CMAKE_FIND_ROOT_PATH_MODE_INCLUDE = "BOTH"
@@ -709,7 +727,6 @@ function _get_configs_for_host_toolchain(package, configs, opt)
     opt = opt or {}
     opt.cross                      = true
     local envs                     = {}
-    local sdkdir                   = _translate_paths(package:build_getenv("sdk"))
     envs.CMAKE_C_COMPILER          = _translate_bin_path(package:build_getenv("cc"))
     envs.CMAKE_CXX_COMPILER        = _translate_bin_path(package:build_getenv("cxx"))
     envs.CMAKE_ASM_COMPILER        = _translate_bin_path(package:build_getenv("as"))
@@ -819,11 +836,22 @@ end
 function _get_default_flags(package, configs, buildtype, opt)
     -- The default flags are different for different platforms
     -- @see https://github.com/xmake-io/xmake-repo/pull/4038#issuecomment-2116489448
-    local cachekey = buildtype .. package:plat() .. package:arch()
+    local cc = package:build_getenv("cc")
+    local cxx = package:build_getenv("cxx")
+    local cachekey = buildtype .. package:plat() .. package:arch() .. (cc or "") .. (cxx or "")
     local cmake_default_flags = _g.cmake_default_flags and _g.cmake_default_flags[cachekey]
     if not cmake_default_flags then
         local tmpdir = path.join(os.tmpfile() .. ".dir", package:displayname(), package:mode())
         local dummy_cmakelist = path.join(tmpdir, "CMakeLists.txt")
+
+        local cflags
+        if cc then
+            cflags = "-DCMAKE_C_COMPILER=" .. _translate_bin_path(cc)
+        end
+        local cxxflags
+        if cxx then
+            cxxflags = "-DCMAKE_CXX_COMPILER=" .. _translate_bin_path(cxx)
+        end
 
         -- About the minimum cmake version requirement
         -- @see https://github.com/xmake-io/xmake/pull/6032
@@ -849,9 +877,9 @@ function _get_default_flags(package, configs, buildtype, opt)
 
         local runenvs = opt.envs or buildenvs(package)
         local cmake = find_tool("cmake")
-        local _configs = table.join(configs, "-S " .. path.directory(dummy_cmakelist), "-B " .. tmpdir)
+        local _configs = table.join(configs, "-S " .. path.directory(dummy_cmakelist), "-B " .. tmpdir, cflags or {}, cxxflags)
         local outdata = try{ function() return os.iorunv(cmake.program, _configs, {envs = runenvs}) end}
-        if outdata then
+        if outdata and outdata ~= "" then
             cmake_default_flags = {}
             cmake_default_flags.cflags = outdata:match("CMAKE_C_FLAGS is (.-)\n") or " "
             cmake_default_flags.cflags = cmake_default_flags.cflags .. " " .. outdata:match(format("CMAKE_C_FLAGS_%s is (.-)\n", buildtype)):replace("/MDd", ""):replace("/MD", "")
@@ -1061,7 +1089,7 @@ end
 -- do build for make
 function _build_for_make(package, configs, opt)
     local argv = {}
-    local targets = table.wrap(opt.target)
+    local targets = table.wrap(opt.targets or opt.target)
     if #targets ~= 0 then
         table.join2(argv, targets)
     end
@@ -1096,7 +1124,7 @@ function _build_for_ninja(package, configs, opt)
     _fix_pdbdir_for_ninja(package)
     ninja.build(package, {}, {envs = opt.envs or buildenvs(package, opt),
         jobs = opt.jobs,
-        target = opt.target})
+        targets = opt.targets or opt.target})
 end
 
 -- do build for cmake/build
@@ -1107,7 +1135,7 @@ function _build_for_cmakebuild(package, configs, opt)
         table.insert(argv, "--config")
         table.insert(argv, opt.config)
     end
-    local targets = table.wrap(opt.target)
+    local targets = table.wrap(opt.targets or opt.target)
     if #targets ~= 0 then
         table.insert(argv, "--target")
         if #targets > 1 then
@@ -1185,7 +1213,7 @@ function _install_for_ninja(package, configs, opt)
     _fix_pdbdir_for_ninja(package)
     ninja.install(package, {}, {envs = opt.envs or buildenvs(package, opt),
         jobs = opt.jobs,
-        target = opt.target})
+        targets = opt.targets or opt.target})
 end
 
 -- do install for cmake/build

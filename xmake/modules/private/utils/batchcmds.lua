@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        batchcmds.lua
@@ -279,14 +279,16 @@ function batchcmds:compile(sourcefiles, objectfile, opt)
     opt.target = self._TARGET
 
     -- wrap path for sourcefiles, because we need to translate path for project generator
-    if type(sourcefiles) == "table" then
-        local sourcefiles_wrap = {}
-        for _, sourcefile in ipairs(sourcefiles) do
-            table.insert(sourcefiles_wrap, path(sourcefile))
+    if not path.instance_of(sourcefiles) then
+        if type(sourcefiles) == "table"  then
+            local sourcefiles_wrap = {}
+            for _, sourcefile in ipairs(sourcefiles) do
+                table.insert(sourcefiles_wrap, path(sourcefile))
+            end
+            sourcefiles = sourcefiles_wrap
+        else
+            sourcefiles = path(sourcefiles)
         end
-        sourcefiles = sourcefiles_wrap
-    else
-        sourcefiles = path(sourcefiles)
     end
 
     -- load compiler and get compilation command

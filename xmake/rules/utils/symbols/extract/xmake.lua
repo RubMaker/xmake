@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -27,6 +27,7 @@ rule("utils.symbols.extract")
         local strip = target:get("strip")
         local symbols = table.wrap(target:get("symbols"))
         if table.contains(symbols, "debug") and (strip == "all" or strip == "debug")
+            and not target:is_plat("windows") -- we need not to strip pdb for windows, https://github.com/xmake-io/xmake/issues/6554
             and (target:is_binary() or target:is_shared()) and target:tool("strip") then -- only for strip command
             target:data_set("utils.symbols.extract", true)
             target:set("strip", "none") -- disable strip in link stage, because we need to run separate strip commands

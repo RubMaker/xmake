@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        project.lua
@@ -417,7 +417,8 @@ function project._load_targets()
         for _, sourcefile in ipairs(table.wrap(t:get("files"))) do
             local extension = path.extension((sourcefile:gsub("|.*$", "")))
             if not extensions[extension] then
-                local lang = language.load_ex(extension)
+                local sourcekind = t:extraconf("files", sourcefile, "sourcekind")
+                local lang = sourcekind and language.load_sk(sourcekind) or language.load_ex(extension)
                 if lang and lang:rules() then
                     table.join2(rulenames, lang:rules())
                 end

@@ -12,7 +12,7 @@
 -- See the License for the specific tool governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        tool.lua
@@ -246,6 +246,11 @@ function tool.load(kind, opt)
 
     -- init cachekey
     local cachekey = kind .. (program or "") .. plat .. arch .. (opt.host and "host" or "")
+    if toolchain_info and toolchain_info.cachekey then
+        -- it maybe contains target key
+        -- @see https://github.com/xmake-io/xmake/issues/6672
+        cachekey = cachekey .. toolchain_info.cachekey
+    end
 
     -- get it directly from cache dirst
     tool._TOOLS = tool._TOOLS or {}

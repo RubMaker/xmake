@@ -12,24 +12,34 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        targets.lua
 --
 
 -- imports
+import("core.base.option")
 import("core.project.config")
 import("core.project.project")
 import("core.platform.platform")
 import(".showlist")
 
--- show all platforms
+-- show all targets (optionally filtered by group)
 function main()
     config.load()
+    
     local targets = {}
-    for name, _ in pairs(project.targets()) do
-        table.insert(targets, name)
+    local group_pattern = option.get("group")
+    if group_pattern then
+        group_pattern = "^" .. path.pattern(group_pattern) .. "$"
     end
+    for name, target in pairs(project.targets()) do
+        local group = target:get("group")
+        if (target:is_default() and not group_pattern) or (group_pattern and group and group:match(group_pattern)) then
+            table.insert(targets, name)
+        end
+    end
+
     showlist(targets)
 end

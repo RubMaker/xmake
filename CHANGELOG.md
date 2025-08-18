@@ -2,10 +2,27 @@
 
 ## master (unreleased)
 
+## v3.0.1
+
+### New features
+
+* [#4810](https://github.com/xmake-io/xmake/issues/4810): Add Native XCode project generator plugin
+
+### Bugs fixed
+
+* [#6592](https://github.com/xmake-io/xmake/pull/6592): Fix objects only links
+* [#6586](https://github.com/xmake-io/xmake/issues/6586): Fix build.fence policy
+* [#6600](https://github.com/xmake-io/xmake/issues/6600): Fix compile_commands generator for c++modules
+* [#6621](https://github.com/xmake-io/xmake/issues/6621): Fix android build for ndk r17c
+* [#6635](https://github.com/xmake-io/xmake/discussions/6635): Fix batchcmds for qt/moc
+
+## v3.0.0
+
 ### New features
 
 * [#5926](https://github.com/xmake-io/xmake/issues/5926): Add MIDL support
 * [#6414](https://github.com/xmake-io/xmake/pull/6414): Add platform.windows.subsystem rule
+* [#5527](https://github.com/xmake-io/xmake/issues/5527): Switch to 3.0 policies
 
 ### Changes
 
@@ -15,6 +32,9 @@
 * [#5545](https://github.com/xmake-io/xmake/discussions/5545): Use ninja generator for cmake package by default
 * [#6355](https://github.com/xmake-io/xmake/pull/6355): Support customizing implib path of MinGW/MSVC
 * [#6373](https://github.com/xmake-io/xmake/pull/6373): Improve c++ modules support
+* [#6376](https://github.com/xmake-io/xmake/issues/6476): Improve vsxmake generators for namespaces
+* [#6209](https://github.com/xmake-io/xmake/pull/6209): Add build jobgraph support
+* [#6361](https://github.com/xmake-io/xmake/pull/6361): Rename buildir to builddir
 
 ## v2.9.9
 
@@ -1982,10 +2002,27 @@
 
 ## master (开发中)
 
+## v3.0.1
+
+### 新特性
+
+* [#4810](https://github.com/xmake-io/xmake/issues/4810): 添加新的原生 Xcode 工程生成插件
+
+### Bugs 修复
+
+* [#6592](https://github.com/xmake-io/xmake/pull/6592): 修复 object 目标的链接问题
+* [#6586](https://github.com/xmake-io/xmake/issues/6586): 修复 build.fence 策略
+* [#6600](https://github.com/xmake-io/xmake/issues/6600): 修复 compile_commands 生成器
+* [#6621](https://github.com/xmake-io/xmake/issues/6621): 修复 android ndk r17c 构建失败问题
+* [#6635](https://github.com/xmake-io/xmake/discussions/6635): 修复 batchcmds 导致的 qt/moc 增量构建问题
+
+## v3.0.0
+
 ### 新特性
 
 * [#5926](https://github.com/xmake-io/xmake/issues/5926): 添加 MIDL 支持
 * [#6414](https://github.com/xmake-io/xmake/pull/6414): 添加 platform.windows.subsystem 规则
+* [#5527](https://github.com/xmake-io/xmake/issues/5527): 切换到 3.0 行为策略
 
 ### 改进
 
@@ -1995,6 +2032,9 @@
 * [#5545](https://github.com/xmake-io/xmake/discussions/5545): 构建 cmake 包，默认使用 Ninja 生成器
 * [#6355](https://github.com/xmake-io/xmake/pull/6355): 支持自定义 implib 路径和访问
 * [#6373](https://github.com/xmake-io/xmake/pull/6373): 改进 c++ modules 支持
+* [#6376](https://github.com/xmake-io/xmake/issues/6476): 改进 vsxmake 生成器，支持命名空间
+* [#6209](https://github.com/xmake-io/xmake/pull/6209): 添加 jobgraph 支持
+* [#6361](https://github.com/xmake-io/xmake/pull/6361): 重命名 buildir 到 builddir
 
 ## v2.9.9
 

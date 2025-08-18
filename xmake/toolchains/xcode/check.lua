@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        check.lua
@@ -57,17 +57,23 @@ function main(toolchain)
         config.set("xcode", xcode.sdkdir, {force = true, readonly = true})
         config.set("xcode_mobile_provision", xcode.mobile_provision, {force = true, readonly = true})
         config.set("xcode_codesign_identity", xcode.codesign_identity, {force = true, readonly = true})
-        cprint("checking for Xcode directory ... ${color.success}%s", xcode.sdkdir)
-        if xcode.codesign_identity then
-            cprint("checking for Codesign Identity of Xcode ... ${color.success}%s", xcode.codesign_identity)
+        if xcode.sdkdir then
+            cprint("checking for Xcode directory ... ${color.success}%s", xcode.sdkdir)
         else
-            cprint("checking for Codesign Identity of Xcode ... ${color.nothing}${text.nothing}")
+            cprint("checking for Xcode directory ... ${color.nothing}${text.nothing}")
         end
-        if toolchain:is_plat("iphoneos") then
-            if xcode.mobile_provision then
-                cprint("checking for Mobile Provision of Xcode ... ${color.success}%s", xcode.mobile_provision)
+        if option.get("verbose") then
+            if xcode.codesign_identity then
+                cprint("checking for Codesign Identity of Xcode ... ${color.success}%s", xcode.codesign_identity)
             else
-                cprint("checking for Mobile Provision of Xcode ... ${color.nothing}${text.nothing}")
+                cprint("checking for Codesign Identity of Xcode ... ${color.nothing}${text.nothing}")
+            end
+            if toolchain:is_plat("iphoneos") then
+                if xcode.mobile_provision then
+                    cprint("checking for Mobile Provision of Xcode ... ${color.success}%s", xcode.mobile_provision)
+                else
+                    cprint("checking for Mobile Provision of Xcode ... ${color.nothing}${text.nothing}")
+                end
             end
         end
     end

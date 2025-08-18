@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://xmake.io">
-    <img width="160" height="160" src="https://tboox.org/static/img/xmake/logo256c.png">
+    <img width="160" height="160" src="https://xmake.io/assets/img/logo.png">
   </a>
 
   <h1>xmake</h1>
@@ -35,7 +35,7 @@
     <a href="https://discord.gg/xmake">
       <img src="https://img.shields.io/badge/chat-on%20discord-7289da.svg?style=flat-square" alt="Discord" />
     </a>
-    <a href="https://xmake.io/#/sponsor">
+    <a href="https://xmake.io/about/sponsor">
       <img src="https://img.shields.io/badge/donate-us-orange.svg?style=flat-square" alt="Donate" />
     </a>
   </div>
@@ -46,7 +46,7 @@
 
 ## Support this project
 
-Support this project by [becoming a sponsor](https://xmake.io/#/about/sponsor). Your logo will show up here with a link to your website. 🙏
+Support this project by [becoming a sponsor](https://xmake.io/about/sponsor). Your logo will show up here with a link to your website. 🙏
 
 <a href="https://opencollective.com/xmake#sponsors" target="_blank"><img src="https://opencollective.com/xmake/sponsors.svg?width=890"></a>
 <a href="https://opencollective.com/xmake#backers" target="_blank"><img src="https://opencollective.com/xmake/backers.svg?width=890"></a>
@@ -79,11 +79,11 @@ Although less precise, one can still understand Xmake in the following way:
 Xmake ≈ Make/Ninja + CMake/Meson + Vcpkg/Conan + distcc + ccache/sccache
 ```
 
-If you want to know more, please refer to: the [Documentation](https://xmake.io/#/getting_started), [GitHub](https://github.com/xmake-io/xmake) or [Gitee](https://gitee.com/tboox/xmake). You are also welcome to join our [community](https://xmake.io/#/about/contact).
+If you want to know more, please refer to the [Documentation](https://xmake.io/guide/quick-start), [GitHub](https://github.com/xmake-io/xmake) or [Gitee](https://gitee.com/tboox/xmake). You are also welcome to join our [community](https://xmake.io/about/contact).
 
 The official Xmake repository can be found at [xmake-io/xmake-repo](https://github.com/xmake-io/xmake-repo).
 
-![](https://github.com/xmake-io/xmake-docs/raw/master/assets/img/index/xmake-basic-render.gif)
+![](https://github.com/xmake-io/xmake-docs/raw/master/docs/public/assets/img/index/xmake-basic-render.gif)
 
 ## Installation
 
@@ -107,7 +107,7 @@ irm https://xmake.io/psget.text | iex
 
 ### Other installation methods
 
-If you don't want to use the above scripts to install Xmake, visit the [Installation Guide](https://xmake.io/#/guide/installation) for other installation methods (building from source, package managers, etc.).
+If you don't want to use the above scripts to install Xmake, visit the [Installation Guide](https://xmake.io/guide/quick-start.html#installation) for other installation methods (building from source, package managers, etc.).
 
 ## Simple Project Description
 
@@ -330,7 +330,7 @@ Xmake can automatically fetch and install dependencies!
 
 * Official package repository [xmake-repo](https://github.com/xmake-io/xmake-repo) (tbox >1.6.1)
 * Official package manager [Xrepo](https://github.com/xmake-io/xrepo)
-* [User-built repositories](https://xmake.io/#/package/remote_package?id=using-self-built-private-package-repository)
+* [User-built repositories](https://xmake.io/guide/package-management/using-official-packages.html#using-self-built-private-package-repository)
 * Conan (conan::openssl/1.1.1g)
 * Conda (conda::libpng 1.3.67)
 * Vcpkg (vcpkg:ffmpeg)
@@ -373,15 +373,15 @@ Below is a diagram showing roughly the architecture of Xmake, and thus how it fu
 - [X] Support for real time compressed transfer of large files (lz4).
 - [X] Almost zero configuration cost, no shared filesystem required, for convenience and security.
 
-For more details see: [#274](https://github.com/xmake-io/xmake/issues/274)
+For more details see: [Distributed Compilation](https://xmake.io/guide/extras/distributed-compilation.html)
 
 ## Remote Compilation
 
-For more details see: [#622](https://github.com/xmake-io/xmake/issues/622)
+For more details see: [Remote Compilation](https://xmake.io/guide/extras/remote-compilation.html)
 
 ## Local/Remote Build Cache
 
-For more details see: [#622](https://github.com/xmake-io/xmake/issues/2371)
+For more details see: [Build Cache Acceleration](https://xmake.io/guide/extras/build-cache.html)
 
 ## Benchmark
 
@@ -482,7 +482,7 @@ target("app")
     add_files("exe/*.cpp")
 ```
 
-For more WDK driver examples (UMDF/KMDF/WDM), please visit [WDK Program Examples](https://xmake.io/#/guide/project_examples?id=wdk-driver-program)
+For more WDK driver examples (UMDF/KMDF/WDM), please visit [WDK Program Examples](https://xmake.io/examples/cpp/wdk.html)
 
 ### Darwin Applications
 
@@ -591,7 +591,7 @@ $ xmake l
   }
 ```
 
-To see a list of bultin plugs, please visit [Builtin plugins](https://xmake.io/#/plugin/builtin_plugins).
+To see a list of builtin plugins, please visit [Builtin plugins](https://xmake.io/guide/extensions/builtin-plugins.html).
 
 Please download and install other plugins from the plugins repository [xmake-plugins](https://github.com/xmake-io/xmake-plugins).
 
@@ -668,9 +668,9 @@ with:
 
 ## Who is using Xmake?
 
-The list of people and projects who are using Xmake is available [here](https://xmake.io/#/about/who_is_using_xmake).
+The list of people and projects who are using Xmake is available [here](https://xmake.io/about/who_is_using_xmake.html).
 
-If you are using Xmake, you are welcome to submit your information to the above list through a PR, so that other users and the developers can gauge interest.  Ihis also let users to use xmake more confidently and give us motivation to continue to maintain it.
+If you are using Xmake, you are welcome to submit your information to the above list through a PR, so that other users and the developers can gauge interest.  This also lets users use xmake more confidently and gives us motivation to continue to maintain it.
 
 This will help the Xmake project and it's community grow stronger and expand!
 
@@ -696,6 +696,6 @@ This project exists thanks to all the people who have [contributed](CONTRIBUTING
 * [OpportunityLiu](https://github.com/OpportunityLiu): Improve cuda, tests and ci
 * [xq144](https://github.com/xq114): Improve `xrepo env shell`, and contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.
 * [star-hengxing](https://github.com/star-hengxing): Contribute a lot of packages to the [xmake-repo](https://github.com/xmake-io/xmake-repo) repository.
-* [Arthapz](https://github.com/Arthapz): Contribue new C++ Modules implementation.
+* [Arthapz](https://github.com/Arthapz): Contribute new C++ Modules implementation.
 * [SirLynix](https://github.com/SirLynix): Contributed many packages and let more people know about xmake.
 * `enderger`: Helped smooth out the edges on the English translation of the README

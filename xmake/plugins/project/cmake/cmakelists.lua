@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        cmakelists.lua
@@ -348,7 +348,8 @@ function _add_project(cmakelists, outputdir)
     -- set project name
     local project_name = project.name()
     if not project_name then
-        for _, target in table.orderpairs(project.targets()) do
+        local project_targets = target_utils.get_project_targets()
+        for _, target in table.orderpairs(project_targets) do
             project_name = target:name()
         end
     end
@@ -460,7 +461,8 @@ end
 
 function _print_target_sources(cmakelists, target, files, visibility, opt)
     opt = opt or {}
-    local has_fileset_support = _get_cmake_version():ge("3.23")
+    local cmake_version = _get_cmake_version()
+    local has_fileset_support = cmake_version and cmake_version:ge("3.23")
     local fileset = ""
     if has_fileset_support and opt.set then
         fileset = "FILE_SET " .. opt.set .. " FILES"
@@ -1220,7 +1222,13 @@ function _get_command_string(cmd, outputdir)
     elseif kind == "mkdir" then
         return string.format("${CMAKE_COMMAND} -E make_directory %s", _get_relative_unix_path_to_cmake(cmd.dir, outputdir))
     elseif kind == "show" then
-        return string.format("echo %s", colors.ignore(cmd.showtext))
+        local text = colors.ignore(cmd.showtext)
+        -- we need to translate paths in text
+        -- https://github.com/xmake-io/xmake/issues/6553
+        if is_host("windows") then
+            text = path.unix(text)
+        end
+        return string.format("echo %s", text)
     end
 end
 
@@ -1383,7 +1391,8 @@ function _generate_cmakelists(cmakelists, outputdir)
     _add_project(cmakelists, outputdir)
 
     -- add targets
-    for _, target in table.orderpairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for _, target in table.orderpairs(project_targets) do
         _add_target(cmakelists, target, outputdir)
     end
 end

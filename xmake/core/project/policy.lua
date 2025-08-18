@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        policy.lua
@@ -178,7 +178,10 @@ function policy.policies()
             --   private: it will disable fetch remote package repositories
             ["network.mode"]                      = {description = "Set the network mode", type = "string"},
             -- Set the compatibility version, e.g. 2.0, 3.0
-            ["compatibility.version"]             = {description = "Set the compatibility version", type = "string", default = "3.0", values = {"2.0", "3.0"}}
+            ["compatibility.version"]             = {description = "Set the compatibility version", type = "string", default = "3.0", values = {"2.0", "3.0"}},
+            -- Generate the solution file in root output directory
+            -- @see https://github.com/xmake-io/xmake/issues/6519
+            ["generator.vsxmake.root_sln"]        = {description = "Generate the solution file in root output directory", default = false, type = "boolean"}
         }
         policy._POLICIES = policies
     end

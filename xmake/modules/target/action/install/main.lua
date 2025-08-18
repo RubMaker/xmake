@@ -12,14 +12,13 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        main.lua
 --
 
 -- imports
-import("core.base.option")
 import("core.base.hashset")
 import("core.project.project")
 import("utils.binary.deplibs", {alias = "get_depend_libraries"})
@@ -49,31 +48,11 @@ function _get_target_includedir(target, opt)
     return path.join(opt.installdir, opt.includedir)
 end
 
--- we need to get all deplibs, e.g. app -> libfoo.so -> libbar.so ...
--- @see https://github.com/xmake-io/xmake/issues/5325#issuecomment-2242597732
-function _get_target_package_deplibs(binaryfile, depends, libfiles, opt)
-    local deplibs = get_depend_libraries(binaryfile, {plat = opt.plat, arch = opt.arch})
-    local depends_new = hashset.new()
-    for _, deplib in ipairs(deplibs) do
-        local libname = path.filename(deplib)
-        if not depends:has(libname) then
-            depends:insert(libname)
-            depends_new:insert(libname)
-        end
-    end
-    for _, libfile in ipairs(libfiles) do
-        local libname = path.filename(libfile)
-        if depends_new:has(libname) then
-            _get_target_package_deplibs(libfile, depends, libfiles, opt)
-        end
-    end
-end
-
 function _get_target_package_libfiles(target, opt)
-    if option.get("nopkgs") then
+    opt = opt or {}
+    if not opt.packages then
         return {}
     end
-    opt = opt or {}
     local libfiles = {}
     for _, pkg in ipairs(target:orderpkgs(opt)) do
         if pkg:enabled() and pkg:get("libfiles") then
@@ -88,16 +67,22 @@ function _get_target_package_libfiles(target, opt)
     -- we can only reserve used libraries
     if project.policy("install.strip_packagelibs") then
         if target:is_binary() or target:is_shared() or opt.binaryfile then
-            local depends = hashset.new()
-            _get_target_package_deplibs(opt.binaryfile or target:targetfile(), depends, libfiles, {plat = target:plat(), arch = target:arch()})
-            table.remove_if(libfiles, function (_, libfile) return not depends:has(path.filename(libfile)) end)
+            -- we need to get all deplibs, e.g. app -> libfoo.so -> libbar.so ...
+            -- @see https://github.com/xmake-io/xmake/issues/5325#issuecomment-2242597732
+            local deplibs = get_depend_libraries(opt.binaryfile or target:targetfile(), {
+                plat = target:plat(), arch = target:arch(),
+                recursive = true, resolve_path = true, resolve_hint_paths = libfiles})
+            if deplibs then
+                local depends = hashset.from(deplibs)
+                table.remove_if(libfiles, function (_, libfile) return not depends:has(libfile) end)
+            end
         end
     end
     return libfiles
 end
 
 -- get target libraries
-function _get_target_libfiles(target, libfiles, binaryfile, refs)
+function _get_target_libfiles(target, libfiles, binaryfile, refs, opt)
     if not refs[target] then
         local plaindeps = target:get("deps")
         if plaindeps then
@@ -109,14 +94,14 @@ function _get_target_libfiles(target, libfiles, binaryfile, refs)
                         if os.isfile(depfile) then
                             table.insert(libfiles, depfile)
                         end
-                        _get_target_libfiles(dep, libfiles, dep:targetfile(), refs)
+                        _get_target_libfiles(dep, libfiles, dep:targetfile(), refs, opt)
                     elseif dep:is_library() then
-                        _get_target_libfiles(dep, libfiles, binaryfile, refs)
+                        _get_target_libfiles(dep, libfiles, binaryfile, refs, opt)
                     end
                 end
             end
         end
-        table.join2(libfiles, _get_target_package_libfiles(target, {binaryfile = binaryfile}))
+        table.join2(libfiles, _get_target_package_libfiles(target, table.join({binaryfile = binaryfile}, opt)))
         refs[target] = true
     end
 end
@@ -177,7 +162,7 @@ function _install_shared_libraries(target, opt)
 
     -- get all dependent shared libraries
     local libfiles = {}
-    _get_target_libfiles(target, libfiles, target:targetfile(), {})
+    _get_target_libfiles(target, libfiles, target:targetfile(), {}, opt)
     libfiles = table.unique(libfiles)
 
     -- do install
@@ -218,61 +203,89 @@ end
 
 -- install binary
 function _install_binary(target, opt)
-    local bindir = _get_target_bindir(target, opt)
-    os.mkdir(bindir)
-    os.vcp(target:targetfile(), bindir)
-    os.trycp(target:symbolfile(), path.join(bindir, path.filename(target:symbolfile())))
-    _install_shared_libraries(target, opt)
-    _update_install_rpath(target, opt)
+    if opt.libraries then
+        _install_shared_libraries(target, opt)
+    end
+    if opt.binaries then
+        local bindir = _get_target_bindir(target, opt)
+        os.mkdir(bindir)
+        os.vcp(target:targetfile(), bindir)
+        os.trycp(target:symbolfile(), path.join(bindir, path.filename(target:symbolfile())))
+        _update_install_rpath(target, opt)
+    end
 end
 
 -- install shared library
 function _install_shared(target, opt)
-    local bindir = target:is_plat("windows", "mingw") and _get_target_bindir(target, opt) or _get_target_libdir(target, opt)
-    os.mkdir(bindir)
-    local targetfile = target:targetfile()
+    if opt.libraries then
+        local bindir = target:is_plat("windows", "mingw") and _get_target_bindir(target, opt) or _get_target_libdir(target, opt)
+        os.mkdir(bindir)
+        local targetfile = target:targetfile()
 
-    if target:is_plat("windows", "mingw") then
-        -- install *.lib for shared/windows (*.dll) target
-        -- @see https://github.com/xmake-io/xmake/issues/714
-        os.vcp(target:targetfile(), bindir)
-        local libdir = _get_target_libdir(target, opt)
-        local implibfile = target:artifactfile("implib")
-        if os.isfile(implibfile) then
-            os.mkdir(libdir)
-            os.vcp(implibfile, libdir)
+        if target:is_plat("windows", "mingw") then
+            -- install *.lib for shared/windows (*.dll) target
+            -- @see https://github.com/xmake-io/xmake/issues/714
+            os.vcp(target:targetfile(), bindir)
+            local libdir = _get_target_libdir(target, opt)
+            local implibfile = target:artifactfile("implib")
+            if os.isfile(implibfile) then
+                os.mkdir(libdir)
+                os.vcp(implibfile, libdir)
+            end
+        else
+            -- install target with soname and symlink
+            _copy_file_with_symlinks(targetfile, bindir)
         end
-    else
-        -- install target with soname and symlink
-        _copy_file_with_symlinks(targetfile, bindir)
+        os.trycp(target:symbolfile(), path.join(bindir, path.filename(target:symbolfile())))
+        _install_shared_libraries(target, opt)
     end
-    os.trycp(target:symbolfile(), path.join(bindir, path.filename(target:symbolfile())))
-
-    _install_headers(target, opt)
-    _install_shared_libraries(target, opt)
+    if opt.headers then
+        _install_headers(target, opt)
+    end
 end
 
 -- install static library
 function _install_static(target, opt)
-    local libdir = _get_target_libdir(target, opt)
-    os.mkdir(libdir)
-    os.vcp(target:targetfile(), libdir)
-    os.trycp(target:symbolfile(), path.join(libdir, path.filename(target:symbolfile())))
-    _install_headers(target, opt)
+    if opt.libraries then
+        local libdir = _get_target_libdir(target, opt)
+        os.mkdir(libdir)
+        os.vcp(target:targetfile(), libdir)
+        os.trycp(target:symbolfile(), path.join(libdir, path.filename(target:symbolfile())))
+    end
+    if opt.headers then
+        _install_headers(target, opt)
+    end
 end
 
 -- install headeronly library
 function _install_headeronly(target, opt)
-    _install_headers(target, opt)
+    if opt.headers then
+        _install_headers(target, opt)
+    end
 end
 
 -- install moduleonly library
 function _install_moduleonly(target, opt)
-    _install_headers(target, opt)
+    if opt.headers then
+        _install_headers(target, opt)
+    end
 end
 
 function main(target, opt)
     opt = opt or {}
+    if opt.headers == nil then
+        opt.headers = true
+    end
+    if opt.binaries == nil then
+        opt.binaries = true
+    end
+    if opt.libraries == nil then
+        opt.libraries = true
+    end
+    if opt.packages == nil then
+        opt.packages = true
+    end
+
     local installdir = opt.installdir or target:installdir()
     if not installdir then
         wprint("please use `xmake install -o installdir` or `set_installdir` to set install directory.")

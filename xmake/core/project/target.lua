@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        target.lua
@@ -201,7 +201,8 @@ function _instance:_update_filerules()
     for _, sourcefile in ipairs(table.wrap(self:get("files"))) do
         local extension = path.extension((sourcefile:gsub("|.*$", "")))
         if not extensions[extension] then
-            local lang = language.load_ex(extension)
+            local sourcekind = self:extraconf("files", sourcefile, "sourcekind")
+            local lang = sourcekind and language.load_sk(sourcekind) or language.load_ex(extension)
             if lang and lang:rules() then
                 table.join2(rulenames, lang:rules())
             end
@@ -1859,7 +1860,8 @@ function _instance:filerules(sourcefile)
     local filename = path.filename(sourcefile):lower()
     for _, r in ipairs(table.wrap(key2rules[path.extension(filename, 2)] or
                                   key2rules[path.extension(filename)] or
-                                  key2rules[self:sourcekind_of(filename)])) do
+                                  key2rules[self:sourcekind_of(filename)] or
+                                  key2rules[fileconfig and fileconfig.sourcekind])) do -- add_files("*.nasm", {sourcekind = "asm"})
         if self:extraconf("rules", r:name(), "override") then
             table.insert(rules_override, r)
         else
@@ -2000,13 +2002,14 @@ function _instance:sourcefiles()
             removed = true
         end
 
-        -- find source files and try to cache the matching results of os.match across targets
-        -- @see https://github.com/xmake-io/xmake/issues/1353
-        local results = targetcache:get2("sourcefiles", file)
-        if not results then
-            if removed then
-                results = {file}
-            else
+        local results
+        if removed then
+            results = {file}
+        else
+            -- find source files and try to cache the matching results of os.match across targets
+            -- @see https://github.com/xmake-io/xmake/issues/1353
+            results = targetcache:get2("sourcefiles", file)
+            if results == nil then
                 results = os.files(file)
                 if #results == 0 then
                     -- attempt to find source directories if maybe compile it as directory with the custom rules

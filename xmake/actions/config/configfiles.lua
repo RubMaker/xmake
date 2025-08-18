@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        configfiles.lua
@@ -74,7 +74,7 @@ function _get_configfiles()
                 table.insert(srcinfo.targets, target)
 
                 -- save preprocessors
-                local preprocessor = target:extraconf("configfiles", srcfile, "preprocessor")
+                local preprocessor = fileinfo and fileinfo.preprocessor
                 if preprocessor then
                     srcinfo.preprocessors = srcinfo.preprocessors or {}
                     table.insert(srcinfo.preprocessors, preprocessor)

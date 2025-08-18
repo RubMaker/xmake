@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        theme.lua
@@ -62,6 +62,10 @@ function theme._interpreter()
 
     -- define apis
     interp:api_define(theme._apis())
+
+    -- the spinner should be able to have the same character occur several times
+    -- cf. https://github.com/xmake-io/xmake/pull/6543#issuecomment-2970305842
+    interp:deduplication_policy_set("text.spinner.chars", false)
 
     -- save interpreter
     theme._INTERPRETER = interp

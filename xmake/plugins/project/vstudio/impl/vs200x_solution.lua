@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs200x_solution.lua
@@ -21,6 +21,7 @@
 -- imports
 import("core.project.project")
 import("vsfile")
+import("private.utils.target", {alias = "target_utils"})
 
 -- make header
 function _make_header(slnfile, vsinfo)
@@ -35,7 +36,8 @@ function _make_projects(slnfile, vsinfo)
     local vctool = "8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942"
 
     -- make all targets
-    for targetname, target in pairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in pairs(project_targets) do
         if not target:is_phony() then
 
             -- enter project
@@ -67,7 +69,8 @@ function _make_global(slnfile, vsinfo)
 
     -- add project configuration platforms
     slnfile:enter("GlobalSection(ProjectConfigurationPlatforms) = postSolution")
-    for targetname, target in pairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for targetname, target in pairs(project_targets) do
         if not target:is_phony() then
             slnfile:print("{%s}.$(mode)|Win32.ActiveCfg = $(mode)|Win32", hash.uuid4(targetname))
             slnfile:print("{%s}.$(mode)|Win32.Build.0 = $(mode)|Win32", hash.uuid4(targetname))

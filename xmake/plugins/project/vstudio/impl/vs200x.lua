@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        vs200x.lua
@@ -22,6 +22,7 @@
 import("core.project.project")
 import("vs200x_solution")
 import("vs200x_vcproj")
+import("private.utils.target", {alias = "target_utils"})
 
 -- make vstudio project
 function make(outputdir, vsinfo)
@@ -35,15 +36,16 @@ function make(outputdir, vsinfo)
     -- make solution
     vs200x_solution.make(vsinfo)
 
+    local project_targets = target_utils.get_project_targets()
     -- TODO
     -- disable precompiled header first
-    for _, target in pairs(project.targets()) do
+    for _, target in pairs(project_targets) do
         target:set("pcheader", nil)
         target:set("pcxxheader", nil)
     end
 
     -- make vsprojs
-    for _, target in pairs(project.targets()) do
+    for _, target in pairs(project_targets) do
         if not target:is_phony() then
             vs200x_vcproj.make(vsinfo, target)
         end

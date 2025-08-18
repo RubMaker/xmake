@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      SirLynix
 -- @file        target_triple.lua
@@ -81,6 +81,12 @@ end
 --
 -- @return          a valid rustc triple if plat and arch are recognized, nil otherwise
 function main(plat, arch, opt)
+
+    -- is triple? return it directly
+    -- @see https://github.com/xmake-io/xmake/issues/6574
+    if arch:match("%w+%-%w+%-%w+") then
+        return arch
+    end
 
     local target_arch = _translate_arch(arch, opt)
     if not target_arch then

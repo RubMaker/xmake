@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        autoconf.lua
@@ -446,9 +446,9 @@ function buildenvs(package, opt)
             name = name:gsub("clang$", "ld")
             name = name:gsub("clang%-%d+", "ld")
             name = name:gsub("gcc$", "ld")
-            name = name:gsub("gcc-%d+", "ld")
+            name = name:gsub("gcc%-%d+$", "ld")
             name = name:gsub("g%+%+$", "ld")
-            name = name:gsub("g%+%+%-%d+", "ld")
+            name = name:gsub("g%+%+%-%d+$", "ld")
             if dir and os.isfile(path.join(dir, name)) then
                 envs.LD = path.join(dir, name)
             else

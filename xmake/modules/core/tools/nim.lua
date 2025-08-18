@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        nim.lua
@@ -140,6 +140,10 @@ function buildargv(self, sourcefiles, targetkind, targetfile, flags)
             table.join2(flags_new, flags_link)
         end
         flags = flags_new
+    end
+    if targetkind == "static" then
+        local targetname = path.basename(targetkind)
+        table.insert(flags_extra, "--nimMainPrefix:lib" .. targetname)
     end
     return self:program(), table.join("c", flags, flags_extra, "-o:" .. targetfile, sourcefiles)
 end

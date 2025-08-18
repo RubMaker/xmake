@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        download_resources.lua
@@ -137,9 +137,9 @@ function _download(package, resource_name, resource_url, resource_hash)
     local extension = archive.extension(resource_file)
     local errors
     local ok = try {
-        function() 
+        function ()
             archive.extract(resource_file, resourcedir_tmp)
-            return true 
+            return true
         end,
         catch {
             function (errs)

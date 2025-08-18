@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        gn.lua
@@ -127,7 +127,7 @@ function build(package, configs, opt)
 
     -- do build
     local builddir = _get_builddir(opt)
-    local targets = table.wrap(opt.target)
+    local targets = table.wrap(opt.targets or opt.target)
     ninja.build(package, targets, {builddir = builddir, envs = opt.envs or buildenvs(package, opt)})
 end
 
@@ -140,6 +140,6 @@ function install(package, configs, opt)
 
     -- do build and install
     local builddir = _get_builddir(opt)
-    local targets = table.wrap(opt.target)
+    local targets = table.wrap(opt.targets or opt.target)
     ninja.install(package, targets, {builddir = builddir, envs = opt.envs or buildenvs(package, opt)})
 end

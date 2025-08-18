@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        compile_commands.lua
@@ -27,6 +27,7 @@ import("core.project.project")
 import("core.language.language")
 import("private.utils.batchcmds")
 import("private.utils.executable_path")
+import("private.utils.target", {alias = "target_utils"})
 import("plugins.project.utils.target_cmds", {rootdir = os.programdir()})
 import("actions.test.main", {rootdir = os.programdir(), alias = "test_action"})
 
@@ -136,8 +137,13 @@ function _translate_arguments(arguments)
                 end
             end
         end
-        if arg == "-I" then
+        if arg and arg == "-I" then
             is_include = true
+        end
+        -- ignore pch flags
+        -- https://github.com/xmake-io/xmake/issues/6710
+        if arg and (arg == "-include-pch" or arg:endswith(".pch")) then
+            arg = nil
         end
         if arg then
             -- improve to support for "/usr/bin/xcrun -sdk macosx clang"
@@ -263,13 +269,6 @@ function _add_target(jsonfile, target)
     -- enter package environments
     local oldenvs = os.addenvs(target:pkgenvs())
 
-    -- we enable it for clangd, @see https://github.com/xmake-io/xmake/issues/2818
-    local lsp = _get_lsp()
-    if not lsp or lsp ~= "clangd" then
-        target:set("pcheader", nil)
-        target:set("pcxxheader", nil)
-    end
-
     -- add target commands
     _add_target_commands(jsonfile, target)
 
@@ -282,7 +281,8 @@ function _add_targets(jsonfile)
     jsonfile:print("[")
     _g.firstline = true
 
-    for _, target in pairs(project.targets()) do
+    local project_targets = target_utils.get_project_targets()
+    for _, target in pairs(project_targets) do
         if not target:is_phony() then
             _add_target(jsonfile, target)
         end
@@ -308,7 +308,6 @@ function make(outputdir)
     local oldir = os.cd(os.projectdir())
     local jsonfile = io.open(path.join(outputdir, "compile_commands.json"), "w")
     os.setenv("XMAKE_IN_COMPILE_COMMANDS_PROJECT_GENERATOR", "true")
-    target_cmds.prepare_targets()
     _add_targets(jsonfile)
     jsonfile:close()
     os.setenv("XMAKE_IN_COMPILE_COMMANDS_PROJECT_GENERATOR", nil)

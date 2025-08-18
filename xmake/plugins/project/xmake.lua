@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        xmake.lua
@@ -43,7 +43,7 @@ task("project")
                                                         ,   "    - xmakefile (makefile with xmake)"
                                                         ,   "    - cmake"
                                                         ,   "    - ninja"
-                                                        ,   "    - xcode (need cmake)"
+                                                        ,   "    - xcode"
                                                         ,   "    - compile_flags"
                                                         ,   "    - compile_commands (clang compilation database with json format)"
                                                         ,   "    - vs (auto detect), vs2002 - vs2022"
@@ -61,6 +61,9 @@ task("project")
                 ,   {'a', "archs",     "kv" , nil       ,   "Set the project archs."
                                                         ,   "    e.g. "
                                                         ,   "    - xmake project -k vsxmake -a \"x86,x64\""                                 }
+                ,   {'t', "target",    "kv" , nil       ,   "Set the project target."
+                                                        ,   "    e.g. "
+                                                        ,   "    - xmake project -k compile_commands -t \"custom\""                            }
                 ,   {nil, "lsp",       "kv" , nil       ,   "Set the LSP backend for compile_commands."
                                                         ,   "    e.g. "
                                                         ,   "    - xmake project -k compile_commands --lsp=clangd"

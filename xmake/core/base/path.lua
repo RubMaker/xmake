@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        path.lua
@@ -30,6 +30,7 @@ local _instance = _instance or {}
 path._absolute = path._absolute or path.absolute
 path._relative = path._relative or path.relative
 path._translate = path._translate or path.translate
+path._directory = path._directory or path.directory
 
 -- new a path
 function _instance.new(p, transform)
@@ -192,10 +193,13 @@ function path.normalize(p)
     return path.translate(tostring(p), {normalize = true})
 end
 
--- get the directory of the path, compatible with lower version core binary
-if not path.directory then
-    function path.directory(p, sep)
-        p = tostring(p)
+-- get the directory of the path
+function path.directory(p, sep)
+    p = tostring(p)
+    if path._directory then
+        return path._directory(p, sep)
+    else
+        -- compatible with lower version core binary
         local i =  0
         if sep then
             -- if the path has been normalized, we can quickly find it with a unique path separator prompt
@@ -408,6 +412,9 @@ end
 
 -- new a path instance
 function path.new(p, transform)
+    if path.instance_of(p) then
+        p = tostring(p)
+    end
     return _instance.new(p, transform)
 end
 

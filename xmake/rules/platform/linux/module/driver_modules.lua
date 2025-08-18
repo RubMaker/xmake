@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        driver_modules.lua
@@ -266,7 +266,9 @@ function link(target, opt)
         local ld = target:tool("ld")
         assert(ld, "ld not found!")
         ld = ld:gsub("gcc$", "ld")
+        ld = ld:gsub("gcc%-%d+$", "ld")
         ld = ld:gsub("g%+%+$", "ld")
+        ld = ld:gsub("g%+%+%-%d+$", "ld")
 
         -- link target.o
         local argv = {}

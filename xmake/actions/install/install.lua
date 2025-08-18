@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 --
--- Copyright (C) 2015-present, TBOOX Open Source Group.
+-- Copyright (C) 2015-present, Xmake Open Source Community.
 --
 -- @author      ruki
 -- @file        install.lua
@@ -20,6 +20,7 @@
 
 -- imports
 import("core.base.task")
+import("core.base.option")
 import("core.project.rule")
 import("core.project.project")
 import("target.action.install", {alias = "_do_install_target"})
@@ -42,7 +43,11 @@ function _on_install_target(target)
     if done then return end
 
     -- do install
-    _do_install_target(target)
+    _do_install_target(target, {
+        headers = option.get("headers"),
+        binaries = option.get("binaries"),
+        libraries = option.get("libraries"),
+        packages = option.get("packages")})
 end
 
 -- install the given target
