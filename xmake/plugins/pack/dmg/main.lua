@@ -27,42 +27,114 @@ import("lib.detect.find_file")
 import("utils.archive")
 import(".batchcmds")
 
--- get hdiutil tool
+-- get the hdiutil tool
 function _get_hdiutil()
-    local hdiutil = find_tool("hdiutil", {force = true})
-    assert(hdiutil, "hdiutil not found, DMG creation requires macOS!")
+    local hdiutil = find_tool("hdiutil")
+    assert(hdiutil, "hdiutil not found! DMG packaging requires macOS system tools.")
     return hdiutil
 end
 
--- get codesign tool (optional)
-function _get_codesign()
-    return find_tool("codesign", {force = false})
-end
-
--- get create-dmg tool (optional, for better DMG creation)
+-- get the create-dmg tool (optional, for enhanced DMG creation)
 function _get_create_dmg()
-    return find_tool("create-dmg", {force = false})
+    local create_dmg = find_tool("create-dmg")
+    if not create_dmg then
+        print("Warning: create-dmg not found. Using basic hdiutil for DMG creation.")
+        print("For better DMG appearance, install create-dmg: brew install create-dmg")
+    end
+    return create_dmg
 end
 
--- get dmg file path
-function _get_dmgfile(package)
-    return path.absolute(path.join(path.directory(package:sourcedir()), package:name() .. "-" .. package:version() .. ".dmg"))
+-- get the codesign tool
+function _get_codesign()
+    local codesign = find_tool("codesign")
+    return codesign
 end
 
--- translate the file path for macOS
-function _translate_filepath(package, filepath)
-    return filepath:replace(package:install_rootdir(), "/Applications", {plain = true})
+-- get dmg output file
+function _get_dmg_file(package)
+    local filename = string.format("%s-%s.dmg", package:name(), package:version())
+    return path.absolute(path.join(path.directory(package:outputfile() or ""), filename))
 end
 
--- get install command for macOS
-function _get_customcmd(package, installcmds, cmd)
+-- translate the file path for app bundle structure
+function _translate_filepath(package, filepath, appbundle_dir)
+    local install_rootdir = package:install_rootdir()
+    
+    -- 如果路径在安装根目录下，转换为相对路径
+    if filepath:startswith(install_rootdir) then
+        local relative_path = path.relative(filepath, install_rootdir)
+        
+        -- 移除开头的 usr/ 如果存在
+        if relative_path:startswith("usr/") then
+            relative_path = relative_path:sub(5)
+        end
+        
+        -- 映射到App bundle的Contents目录结构
+        if relative_path:startswith("bin/") then
+            return path.join(appbundle_dir, "Contents", "MacOS", path.filename(relative_path))
+        elseif relative_path:startswith("lib/") then
+            return path.join(appbundle_dir, "Contents", "Frameworks", path.filename(relative_path))
+        elseif relative_path:startswith("share/") then
+            return path.join(appbundle_dir, "Contents", "Resources", path.relative(relative_path, "share"))
+        elseif relative_path:startswith("include/") then
+            return path.join(appbundle_dir, "Contents", "Headers", path.relative(relative_path, "include"))
+        else
+            -- 根据文件扩展名智能映射
+            local filename = path.filename(filepath)
+            local ext = path.extension(filename):lower()
+            
+            -- 二进制可执行文件 -> Contents/MacOS
+            if ext == "" or ext == ".exe" then
+                return path.join(appbundle_dir, "Contents", "MacOS", filename)
+            -- 库文件 -> Contents/Frameworks
+            elseif ext == ".dylib" or ext == ".so" or ext == ".framework" then
+                return path.join(appbundle_dir, "Contents", "Frameworks", filename)
+            -- 图标文件 -> Contents/Resources
+            elseif ext == ".png" or ext == ".svg" or ext == ".ico" or ext == ".icns" then
+                return path.join(appbundle_dir, "Contents", "Resources", filename)
+            -- 其他资源文件 -> Contents/Resources
+            else
+                local dirname = path.directory(relative_path)
+                if dirname and dirname ~= "." then
+                    return path.join(appbundle_dir, "Contents", "Resources", dirname, filename)
+                else
+                    return path.join(appbundle_dir, "Contents", "Resources", filename)
+                end
+            end
+        end
+    else
+        -- 对于绝对路径，根据文件类型智能映射
+        local filename = path.filename(filepath)
+        local ext = path.extension(filename):lower()
+        
+        -- 跳过源代码文件
+        if ext == ".cpp" or ext == ".c" or ext == ".h" or ext == ".hpp" or 
+           ext == ".py" or ext == ".js" or ext == ".java" or ext == ".go" then
+            return nil -- 源代码文件不应该被包含
+        -- 二进制文件
+        elseif ext == "" or ext == ".exe" then
+            return path.join(appbundle_dir, "Contents", "MacOS", filename)
+        -- 库文件
+        elseif ext == ".dylib" or ext == ".so" or ext == ".framework" then
+            return path.join(appbundle_dir, "Contents", "Frameworks", filename)
+        -- 图标文件
+        elseif ext == ".png" or ext == ".svg" or ext == ".ico" or ext == ".icns" then
+            return path.join(appbundle_dir, "Contents", "Resources", filename)
+        -- 其他文件
+        else
+            return path.join(appbundle_dir, "Contents", "Resources", filename)
+        end
+    end
+end
+
+-- get install command for app bundle
+function _get_customcmd(package, appbundle_dir, installcmds, cmd)
     local opt = cmd.opt or {}
     local kind = cmd.kind
     if kind == "cp" then
         local srcfiles = os.files(cmd.srcpath)
         for _, srcfile in ipairs(srcfiles) do
-            -- the destination is directory? append the filename
-            local dstfile = _translate_filepath(package, cmd.dstpath)
+            local dstfile = _translate_filepath(package, cmd.dstpath, appbundle_dir)
             if #srcfiles > 1 or path.islastsep(dstfile) then
                 if opt.rootdir then
                     dstfile = path.join(dstfile, path.relative(srcfile, opt.rootdir))
@@ -70,31 +142,43 @@ function _get_customcmd(package, installcmds, cmd)
                     dstfile = path.join(dstfile, path.filename(srcfile))
                 end
             end
-            table.insert(installcmds, string.format("cp -R \"%s\" \"%s\"", srcfile, dstfile))
+            if dstfile then
+                table.insert(installcmds, string.format("install -Dpm0755 \"%s\" \"%s\"", srcfile, dstfile))
+            end
         end
     elseif kind == "rm" then
-        local filepath = _translate_filepath(package, cmd.filepath)
-        table.insert(installcmds, string.format("rm -f \"%s\"", filepath))
+        local filepath = _translate_filepath(package, cmd.filepath, appbundle_dir)
+        if filepath then
+            table.insert(installcmds, string.format("rm -f \"%s\"", filepath))
+        end
     elseif kind == "rmdir" then
-        local dir = _translate_filepath(package, cmd.dir)
-        table.insert(installcmds, string.format("rm -rf \"%s\"", dir))
+        local dir = _translate_filepath(package, cmd.dir, appbundle_dir)
+        if dir then
+            table.insert(installcmds, string.format("rm -rf \"%s\"", dir))
+        end
     elseif kind == "mv" then
-        local srcpath = _translate_filepath(package, cmd.srcpath)
-        local dstpath = _translate_filepath(package, cmd.dstpath)
-        table.insert(installcmds, string.format("mv \"%s\" \"%s\"", srcpath, dstpath))
+        local srcpath = _translate_filepath(package, cmd.srcpath, appbundle_dir)
+        local dstpath = _translate_filepath(package, cmd.dstpath, appbundle_dir)
+        if srcpath and dstpath then
+            table.insert(installcmds, string.format("mv \"%s\" \"%s\"", srcpath, dstpath))
+        end
     elseif kind == "cd" then
-        local dir = _translate_filepath(package, cmd.dir)
-        table.insert(installcmds, string.format("cd \"%s\"", dir))
+        local dir = _translate_filepath(package, cmd.dir, appbundle_dir)
+        if dir then
+            table.insert(installcmds, string.format("cd \"%s\"", dir))
+        end
     elseif kind == "mkdir" then
-        local dir = _translate_filepath(package, cmd.dir)
-        table.insert(installcmds, string.format("mkdir -p \"%s\"", dir))
+        local dir = _translate_filepath(package, cmd.dir, appbundle_dir)
+        if dir then
+            table.insert(installcmds, string.format("mkdir -p \"%s\"", dir))
+        end
     elseif cmd.program then
         local argv = {}
         for _, arg in ipairs(cmd.argv) do
             if path.instance_of(arg) then
-                arg = arg:clone():set(_translate_filepath(package, arg:rawstr())):str()
+                arg = arg:clone():set(_translate_filepath(package, arg:rawstr(), appbundle_dir)):str()
             elseif path.is_absolute(arg) then
-                arg = _translate_filepath(package, arg)
+                arg = _translate_filepath(package, arg, appbundle_dir)
             end
             table.insert(argv, arg)
         end
@@ -102,288 +186,753 @@ function _get_customcmd(package, installcmds, cmd)
     end
 end
 
--- get build commands
-function _get_buildcmds(package, buildcmds, cmds)
+-- get install commands for app bundle
+function _get_installcmds(package, appbundle_dir, installcmds, cmds)
     for _, cmd in ipairs(cmds) do
-        _get_customcmd(package, buildcmds, cmd)
+        _get_customcmd(package, appbundle_dir, installcmds, cmd)
     end
 end
 
--- get install commands
-function _get_installcmds(package, installcmds, cmds)
-    for _, cmd in ipairs(cmds) do
-        _get_customcmd(package, installcmds, cmd)
+-- create Info.plist file
+-- create Info.plist file
+function _create_info_plist(package, appbundle_dir)
+    local bundle_id = string.format("app.%s", package:name())
+    local executable_name = package:name()
+    local icon_name = package:get("iconname") or package:name()
+    
+    -- 确保图标名有.icns扩展名
+    if not icon_name:endswith(".icns") then
+        icon_name = icon_name .. ".icns"
     end
+    
+    local plist_content = string.format([[<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>%s</string>
+    <key>CFBundleExecutable</key>
+    <string>%s</string>
+    <key>CFBundleIconFile</key>
+    <string>%s</string>
+    <key>CFBundleIdentifier</key>
+    <string>%s</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>%s</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>%s</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>%s</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+</dict>
+</plist>
+]], 
+        package:get("title") or package:name(),
+        executable_name,
+        icon_name,
+        bundle_id,
+        package:name(),
+        package:version(),
+        package:version()
+    )
+    
+    local plist_file = path.join(appbundle_dir, "Contents", "Info.plist")
+    io.writefile(plist_file, plist_content)
+    return plist_file
 end
 
--- get specvars for DMG
-function _get_specvars(package)
-    local specvars = table.clone(package:specvars())
-    specvars.PACKAGE_DATE = os.date("%Y-%m-%d %H:%M:%S")
-    local author = package:get("author") or "Unknown Developer"
-    specvars.PACKAGE_COPYRIGHT = "Copyright © " .. os.date("%Y") .. " " .. author
-    specvars.PACKAGE_IDENTIFIER = package:get("identifier") or ("com.example." .. package:name())
-    specvars.PACKAGE_BUNDLE_VERSION = package:version()
-    specvars.PACKAGE_BUNDLE_SHORT_VERSION = package:version()
-    
-    -- Get codesign identity if available
-    local identity = package:get("codesign_identity") or os.getenv("CODESIGN_IDENTITY")
-    specvars.CODESIGN_IDENTITY = identity or ""
-    
-    -- DMG appearance settings
-    specvars.DMG_WINDOW_X = package:get("dmg_window_x") or 100
-    specvars.DMG_WINDOW_Y = package:get("dmg_window_y") or 100  
-    specvars.DMG_WINDOW_WIDTH = package:get("dmg_window_width") or 540
-    specvars.DMG_WINDOW_HEIGHT = package:get("dmg_window_height") or 380
-    specvars.DMG_BACKGROUND = package:get("dmg_background") or ""
-    specvars.DMG_ICON_SIZE = package:get("dmg_icon_size") or 80
-    
-    return specvars
-end
 
--- create app bundle structure
-function _create_app_bundle(package, bundle_dir)
-    -- Create basic app bundle structure
-    local app_name = package:name() .. ".app"
-    local app_path = path.join(bundle_dir, app_name)
-    local contents_dir = path.join(app_path, "Contents")
-    local macos_dir = path.join(contents_dir, "MacOS")
-    local resources_dir = path.join(contents_dir, "Resources")
+-- copy and convert icon file
+function _copy_icon(package, appbundle_dir)
+    local iconfile = package:get("iconfile")
+    local iconname = package:get("iconname") or package:name()
     
-    os.mkdir(contents_dir)
-    os.mkdir(macos_dir)
+    if not iconname:endswith(".icns") then
+        iconname = iconname .. ".icns"
+    end
+    
+    local resources_dir = path.join(appbundle_dir, "Contents", "Resources")
     os.mkdir(resources_dir)
     
-    -- Copy executable and resources
-    local srcfiles, dstfiles = package:sourcefiles()
-    for idx, srcfile in ipairs(srcfiles) do
-        local dstfile = dstfiles[idx]
-        if dstfile:find("MacOS") then
-            dstfile = path.join(macos_dir, path.filename(dstfile))
-        elseif dstfile:find("Resources") then
-            dstfile = path.join(resources_dir, path.filename(dstfile))
-        else
-            dstfile = path.join(contents_dir, path.relative(dstfile, package:install_rootdir()))
-        end
-        os.vcp(srcfile, dstfile)
+    if iconfile and os.isfile(iconfile) then
+        local icon_dst = path.join(resources_dir, iconname)
         
-        -- Make executable files executable
-        if dstfile:find("MacOS") then
-            os.runv("chmod", {"+x", dstfile})
+        -- 如果源文件不是.icns格式，尝试转换
+        if not iconfile:endswith(".icns") then
+            print("Converting icon to .icns format...")
+            -- 使用sips工具转换图标（macOS内置工具）
+            local sips = find_tool("sips")
+            if sips then
+                local temp_iconset = path.join(os.tmpdir(), package:name() .. ".iconset")
+                os.mkdir(temp_iconset)
+                
+                -- 创建不同尺寸的图标
+                local sizes = {16, 32, 64, 128, 256, 512, 1024}
+                for _, size in ipairs(sizes) do
+                    local output_name = string.format("icon_%dx%d.png", size, size)
+                    local output_path = path.join(temp_iconset, output_name)
+                    os.runv(sips.program, {"-z", tostring(size), tostring(size), iconfile, "--out", output_path})
+                    
+                    -- 创建@2x版本（除了最大的）
+                    if size <= 512 then
+                        local output_name_2x = string.format("icon_%dx%d@2x.png", size, size)
+                        local output_path_2x = path.join(temp_iconset, output_name_2x)
+                        os.runv(sips.program, {"-z", tostring(size * 2), tostring(size * 2), iconfile, "--out", output_path_2x})
+                    end
+                end
+                
+                -- 使用iconutil创建.icns文件
+                local iconutil = find_tool("iconutil")
+                if iconutil then
+                    os.runv(iconutil.program, {"-c", "icns", "-o", icon_dst, temp_iconset})
+                    os.tryrm(temp_iconset)
+                else
+                    print("Warning: iconutil not found, copying original icon file")
+                    os.cp(iconfile, icon_dst)
+                end
+            else
+                print("Warning: sips not found, copying original icon file")
+                os.cp(iconfile, icon_dst)
+            end
+        else
+            -- 直接复制.icns文件
+            os.cp(iconfile, icon_dst)
         end
+        
+        return icon_dst
+    else
+        print("Warning: No icon file specified for DMG")
+        return nil
+    end
+end
+
+-- collect dependencies using otool and install_name_tool
+function _collect_deps_manually(package, appbundle_dir)
+    print("Collecting dependencies manually using otool...")
+    
+    local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
+    if not os.isfile(main_executable) then
+        print("Warning: Main executable not found, skipping dependency collection")
+        return false
     end
     
-    -- Copy component files
-    for _, component in table.orderpairs(package:components()) do
-        if component:get("default") ~= false then
-            local srcfiles, dstfiles = component:sourcefiles()
-            for idx, srcfile in ipairs(srcfiles) do
-                local dstfile = dstfiles[idx]
-                if dstfile:find("MacOS") then
-                    dstfile = path.join(macos_dir, path.filename(dstfile))
-                elseif dstfile:find("Resources") then
-                    dstfile = path.join(resources_dir, path.filename(dstfile))
-                else
-                    dstfile = path.join(contents_dir, path.relative(dstfile, package:install_rootdir()))
-                end
-                os.vcp(srcfile, dstfile)
+    print("Analyzing executable:", main_executable)
+    
+    -- get dependencies using otool
+    local otool = find_tool("otool")
+    if not otool then
+        print("Warning: otool not found, cannot collect dependencies")
+        return false
+    end
+    
+    local otool_output = os.iorunv(otool.program, {"-L", main_executable})
+    if not otool_output then
+        print("Warning: otool failed to analyze dependencies")
+        return false
+    end
+    
+    print("otool output:")
+    print(otool_output)
+    
+    local frameworks_dir = path.join(appbundle_dir, "Contents", "Frameworks")
+    os.mkdir(frameworks_dir)
+    
+    local copied_count = 0
+    local install_name_tool = find_tool("install_name_tool")
+    
+    -- parse otool output and copy libraries
+    for line in otool_output:gmatch("[^\r\n]+") do
+        local lib_path = line:match("^%s*([^%s]+%.dylib)")
+        if lib_path and not lib_path:startswith("/usr/lib/") and not lib_path:startswith("/System/") then
+            -- 跳过系统库
+            if os.isfile(lib_path) then
+                local lib_name = path.filename(lib_path)
+                local dst_path = path.join(frameworks_dir, lib_name)
                 
-                if dstfile:find("MacOS") then
-                    os.runv("chmod", {"+x", dstfile})
+                if not os.isfile(dst_path) then
+                    print("Copying library:", lib_path, "->", dst_path)
+                    os.cp(lib_path, dst_path)
+                    copied_count = copied_count + 1
+                    
+                    -- 修改库的install name
+                    if install_name_tool then
+                        local new_install_name = "@executable_path/../Frameworks/" .. lib_name
+                        os.runv(install_name_tool.program, {"-id", new_install_name, dst_path})
+                    end
                 end
             end
         end
     end
     
-    -- Generate Info.plist
-    _generate_info_plist(package, path.join(contents_dir, "Info.plist"))
+    -- 修改主可执行文件中的库路径引用
+    if install_name_tool and copied_count > 0 then
+        print("Updating library references in main executable...")
+        for line in otool_output:gmatch("[^\r\n]+") do
+            local lib_path = line:match("^%s*([^%s]+%.dylib)")
+            if lib_path and not lib_path:startswith("/usr/lib/") and not lib_path:startswith("/System/") then
+                local lib_name = path.filename(lib_path)
+                local new_path = "@executable_path/../Frameworks/" .. lib_name
+                local dst_lib = path.join(frameworks_dir, lib_name)
+                if os.isfile(dst_lib) then
+                    os.runv(install_name_tool.program, {"-change", lib_path, new_path, main_executable})
+                end
+            end
+        end
+    end
     
-    return app_path
+    print("Total libraries copied:", copied_count)
+    return true
 end
 
--- generate Info.plist file
-function _generate_info_plist(package, plist_path)
-    local specvars = _get_specvars(package)
-    local plist_content = string.format([[<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>%s</string>
-    <key>CFBundleIdentifier</key>
-    <string>%s</string>
-    <key>CFBundleName</key>
-    <string>%s</string>
-    <key>CFBundleDisplayName</key>
-    <string>%s</string>
-    <key>CFBundleVersion</key>
-    <string>%s</string>
-    <key>CFBundleShortVersionString</key>
-    <string>%s</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>%s</string>
-</dict>
-</plist>]], 
-        package:name(),
-        specvars.PACKAGE_IDENTIFIER,
-        package:name(),
-        package:displayname() or package:name(),
-        specvars.PACKAGE_BUNDLE_VERSION,
-        specvars.PACKAGE_BUNDLE_SHORT_VERSION,
-        specvars.PACKAGE_COPYRIGHT
-    )
-    
-    io.writefile(plist_path, plist_content)
-end
-
--- code sign the app bundle
-function _codesign_bundle(codesign, app_path, identity)
-    if codesign and identity and identity ~= "" then
-        cprint("Code signing %s with identity: %s", path.filename(app_path), identity)
-        os.vrunv(codesign.program, {
-            "--force",
-            "--sign", identity,
-            "--timestamp",
-            "--options", "runtime",
-            app_path
-        })
+-- create DMG background and layout (simplified)
+function _create_dmg_layout(package, dmg_staging_dir)
+    -- 创建应用程序链接
+    local applications_link = path.join(dmg_staging_dir, "Applications")
+    if not os.islink(applications_link) then
+        os.runv("ln", {"-s", "/Applications", applications_link})
     end
 end
 
--- create DMG using hdiutil
-function _create_dmg_hdiutil(hdiutil, package, bundle_dir, dmg_file)
-    local temp_dmg = dmg_file .. ".temp.dmg"
-    local volume_name = package:displayname() or package:name()
+-- sign the app bundle
+function _sign_app_bundle(package, appbundle_dir, codesign)
+    -- 跳过代码签名，因为不是必需的
+    print("Skipping code signing (not required)")
+    return true
+end
+
+-- pack dmg package
+function _pack_dmg(hdiutil, create_dmg, codesign, package)
+    local app_name = package:get("title") or package:name()
+    local appbundle_name = app_name .. ".app"
     
-    -- Create temporary DMG
-    cprint("Creating temporary DMG...")
-    os.vrunv(hdiutil.program, {
-        "create",
-        "-srcfolder", bundle_dir,
-        "-volname", volume_name,
-        "-fs", "HFS+",
-        "-fsargs", "-c c=64,a=16,e=16",
-        "-format", "UDRW",
-        temp_dmg
-    })
+    -- 创建临时工作目录
+    local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
+    local appbundle_dir = path.join(dmg_staging_dir, appbundle_name)
     
-    -- Mount the temporary DMG
-    cprint("Mounting DMG for customization...")
-    local mount_output = os.iorunv(hdiutil.program, {"attach", "-readwrite", "-noverify", temp_dmg})
-    local mount_point = mount_output:match("/Volumes/[^\r\n]*")
+    os.tryrm(dmg_staging_dir)
+    os.mkdir(dmg_staging_dir)
     
-    if mount_point then
-        -- Create Applications symlink
-        os.runv("ln", {"-sf", "/Applications", path.join(mount_point, "Applications")})
+    -- 创建App bundle目录结构
+    os.mkdir(appbundle_dir)
+    os.mkdir(path.join(appbundle_dir, "Contents"))
+    os.mkdir(path.join(appbundle_dir, "Contents", "MacOS"))
+    os.mkdir(path.join(appbundle_dir, "Contents", "Resources"))
+    os.mkdir(path.join(appbundle_dir, "Contents", "Frameworks"))
+    
+    -- 安装文件到App bundle
+    local installcmds = {}
+    _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(package):cmds())
+    for _, component in table.orderpairs(package:components()) do
+        if component:get("default") ~= false then
+            _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(component):cmds())
+        end
+    end
+    
+    -- 执行安装命令
+    for _, cmd in ipairs(installcmds) do
+        print("Executing: " .. cmd)
+        os.exec(cmd)
+    end
+    
+    -- 复制源文件
+    local srcfiles, dstfiles = package:sourcefiles()
+    for idx, srcfile in ipairs(srcfiles) do
+        local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
+        if dstfile then
+            os.vcp(srcfile, dstfile)
+        end
+    end
+    
+    for _, component in table.orderpairs(package:components()) do
+        if component:get("default") ~= false then
+            local srcfiles, dstfiles = component:sourcefiles()
+            for idx, srcfile in ipairs(srcfiles) do
+                local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
+                if dstfile then
+                    os.vcp(srcfile, dstfile)
+                end
+            end
+        end
+    end
+    
+    -- 创建Info.plist文件
+    _create_info_plist(package, appbundle_dir)
+    
+    -- 复制图标文件
+    _copy_icon(package, appbundle_dir)
+    
+    -- 确保主可执行文件有执行权限
+    local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
+    if os.isfile(main_executable) then
+        os.runv("chmod", {"+x", main_executable})
+    end
+    
+    -- 收集依赖库
+    _collect_deps_manually(package, appbundle_dir)
+    
+    -- 代码签名（跳过，不是必需的）
+    -- if codesign then
+    --     _sign_app_bundle(package, appbundle_dir, codesign)
+    -- end
+    
+    -- 创建DMG布局
+    _create_dmg_layout(package, dmg_staging_dir)
+    
+    local dmg_file = package:outputfile() or _get_dmg_file(package)
+    os.tryrm(dmg_file)
+    
+    -- 使用create-dmg创建更美观的DMG
+    if create_dmg then
+        print("Creating DMG with create-dmg...")
+        local dmg_title = package:get("dmg_title") or app_name
+        local dmg_size = package:get("dmg_size") or "200m"
         
-        -- Copy background image if provided
-        local background = package:get("dmg_background")
-        if background and os.isfile(background) then
-            local background_dir = path.join(mount_point, ".background")
-            os.mkdir(background_dir)
-            os.cp(background, path.join(background_dir, path.filename(background)))
+        local args = {
+            "--volname", dmg_title,
+            "--volicon", package:get("dmg_volicon") or "",
+            "--window-pos", "200", "120",
+            "--window-size", "600", "400",
+            "--icon-size", "100",
+            "--icon", appbundle_name, "175", "220",
+            "--hide-extension", appbundle_name,
+            "--app-drop-link", "425", "220"
+        }
+        
+        -- 添加背景图片（如果有）
+        local background_file = package:get("dmg_background")
+        if background_file and os.isfile(background_file) then
+            table.insert(args, "--background")
+            table.insert(args, background_file)
         end
         
-        -- Unmount
-        os.vrunv(hdiutil.program, {"detach", mount_point})
+        table.insert(args, dmg_file)
+        table.insert(args, dmg_staging_dir)
+        
+        local ok = os.runv(create_dmg.program, args)
+        if not ok then
+            print("create-dmg failed, falling back to hdiutil")
+            create_dmg = nil
+        end
     end
     
-    -- Convert to final compressed DMG
-    cprint("Creating final compressed DMG...")
-    os.tryrm(dmg_file)
-    os.vrunv(hdiutil.program, {
-        "convert", temp_dmg,
-        "-format", "UDZO",
-        "-imagekey", "zlib-level=9",
-        "-o", dmg_file
-    })
+    -- 使用hdiutil创建基本DMG（如果create-dmg不可用或失败）
+    if not create_dmg then
+        print("Creating DMG with hdiutil...")
+        
+        -- 计算需要的磁盘大小
+        local required_size = os.runv("du", {"-sm", dmg_staging_dir}):match("^(%d+)")
+        required_size = math.ceil((tonumber(required_size) or 100) * 1.2) -- 增加20%的缓冲
+        
+        local temp_dmg = dmg_file .. ".tmp"
+        
+        -- 创建空白DMG
+        os.runv(hdiutil.program, {"create", "-size", required_size .. "m", "-fs", "HFS+", 
+                                  "-volname", package:get("dmg_title") or app_name, temp_dmg})
+        
+        -- 挂载DMG
+        local mount_output = os.iorunv(hdiutil.program, {"attach", "-readwrite", "-noverify", "-noautoopen", temp_dmg})
+        local mount_point = mount_output:match("/Volumes/[^\r\n]+")
+        
+        if mount_point then
+            print("DMG mounted at:", mount_point)
+            
+            -- 复制内容到挂载的DMG
+            os.runv("cp", {"-R", path.join(dmg_staging_dir, appbundle_name), mount_point})
+            
+            -- 复制Applications链接
+            local apps_link = path.join(dmg_staging_dir, "Applications")
+            if os.islink(apps_link) then
+                os.runv("cp", {"-R", apps_link, mount_point})
+            end
+            
+            -- 设置DMG图标位置（使用AppleScript）
+            local script = string.format([[
+tell application "Finder"
+    tell disk "%s"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {400, 100, 1000, 500}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 100
+        set position of item "%s" of container window to {175, 220}
+        set position of item "Applications" of container window to {425, 220}
+        close
+        open
+        update without registering applications
+        delay 2
+    end tell
+end tell
+]], package:get("dmg_title") or app_name, appbundle_name)
+            
+            local applescript_file = path.join(os.tmpdir(), "dmg_layout.scpt")
+            io.writefile(applescript_file, script)
+            os.runv("osascript", {applescript_file})
+            os.tryrm(applescript_file)
+            
+            -- 卸载DMG
+            os.runv(hdiutil.program, {"detach", mount_point})
+            
+            -- 转换为只读DMG
+            os.runv(hdiutil.program, {"convert", temp_dmg, "-format", "UDZO", "-imagekey", "zlib-level=9", "-o", dmg_file})
+            os.tryrm(temp_dmg)
+        else
+            print("Error: Failed to mount temporary DMG")
+            return false
+        end
+    end
     
-    -- Clean up
-    os.tryrm(temp_dmg)
+    print("Total libraries copied:", copied_count or 0)
+    return true
 end
 
--- create DMG using create-dmg tool (if available)
-function _create_dmg_advanced(create_dmg, package, bundle_dir, dmg_file)
-    local volume_name = package:displayname() or package:name()
-    local specvars = _get_specvars(package)
-    local args = {
-        "--volname", volume_name,
-        "--window-size", specvars.DMG_WINDOW_WIDTH, specvars.DMG_WINDOW_HEIGHT,
-        "--icon-size", specvars.DMG_ICON_SIZE,
-        "--app-drop-link", "450", "150"
-    }
-    
-    -- Add background if specified
-    if specvars.DMG_BACKGROUND ~= "" and os.isfile(specvars.DMG_BACKGROUND) then
-        table.insert(args, "--background")
-        table.insert(args, specvars.DMG_BACKGROUND)
-    end
-    
-    table.insert(args, dmg_file)
-    table.insert(args, bundle_dir)
-    
-    cprint("Creating DMG with create-dmg...")
-    os.vrunv(create_dmg.program, args)
-end
+-- create DMG volume license (removed, not required)
+-- function _create_dmg_license(package, dmg_staging_dir)
+--     return nil
+-- end
 
--- pack DMG package
-function _pack_dmg(hdiutil, codesign, create_dmg, package)
-    local dmg_file = _get_dmgfile(package)
-    local bundle_dir = path.join(os.tmpdir(), "dmg_build_" .. package:name())
+-- create readme file (removed, not required) 
+-- function _create_dmg_readme(package, dmg_staging_dir)
+--     return nil
+-- end
+
+-- compress and optimize DMG
+function _optimize_dmg(hdiutil, dmg_file)
+    print("Optimizing DMG...")
+    local temp_dmg = dmg_file .. ".temp"
     
-    -- Clean and create bundle directory
-    os.tryrm(bundle_dir)
-    os.mkdir(bundle_dir)
-    
-    -- Create app bundle
-    local app_path = _create_app_bundle(package, bundle_dir)
-    
-    -- Code sign if identity is provided
-    local specvars = _get_specvars(package)
-    if specvars.CODESIGN_IDENTITY ~= "" then
-        _codesign_bundle(codesign, app_path, specvars.CODESIGN_IDENTITY)
-    end
-    
-    -- Create DMG
-    if create_dmg then
-        _create_dmg_advanced(create_dmg, package, bundle_dir, dmg_file)
+    -- 使用最高压缩级别重新压缩DMG
+    local ok = os.runv(hdiutil.program, {"convert", dmg_file, "-format", "UDZO", 
+                                        "-imagekey", "zlib-level=9", "-o", temp_dmg})
+    if ok then
+        os.mv(temp_dmg, dmg_file)
+        print("DMG optimization completed")
     else
-        _create_dmg_hdiutil(hdiutil, package, bundle_dir, dmg_file)
+        print("Warning: DMG optimization failed")
+        os.tryrm(temp_dmg)
+    end
+end
+
+-- verify dmg integrity
+function _verify_dmg(hdiutil, dmg_file)
+    print("Verifying DMG integrity...")
+    local ok = os.runv(hdiutil.program, {"verify", dmg_file})
+    if ok then
+        print("DMG verification passed")
+        return true
+    else
+        print("Warning: DMG verification failed")
+        return false
+    end
+end
+
+-- get dmg configuration (simplified)
+function _get_dmg_config(package)
+    local config = {
+        title = package:get("title") or package:name(),
+        format = "UDZO" -- compressed read-only format
+    }
+    return config
+end
+
+-- create advanced DMG layout with AppleScript (simplified)
+function _create_advanced_dmg_layout(package, mount_point, appbundle_name)
+    local config = _get_dmg_config(package)
+    
+    -- 等待文件系统同步
+    os.runv("sync")
+    
+    local script = string.format([[
+tell application "Finder"
+    tell disk "%s"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {400, 100, 1000, 500}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 100
+        
+        -- 设置图标位置
+        set position of item "%s" of container window to {175, 220}
+        set position of item "Applications" of container window to {425, 220}
+        
+        close
+        open
+        update without registering applications
+        delay 5
+        eject
+    end tell
+end tell
+]], 
+        config.title,
+        appbundle_name
+    )
+    
+    return script
+end
+
+-- create enhanced DMG (simplified)
+function _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg_file)
+    local config = _get_dmg_config(package)
+    local appbundle_name = (package:get("title") or package:name()) .. ".app"
+    
+    if create_dmg then
+        print("Creating DMG with create-dmg...")
+        local args = {
+            "--volname", config.title,
+            "--window-pos", "200", "120",
+            "--window-size", "600", "400",
+            "--icon-size", "100",
+            "--icon", appbundle_name, "175", "220",
+            "--hide-extension", appbundle_name,
+            "--app-drop-link", "425", "220",
+            dmg_file,
+            dmg_staging_dir
+        }
+        
+        local ok = os.runv(create_dmg.program, args)
+        return ok
+    else
+        print("Creating basic DMG with hdiutil...")
+        return _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, appbundle_name)
+    end
+end
+
+-- create basic DMG using hdiutil (simplified)
+function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, appbundle_name)
+    -- 计算需要的磁盘大小
+    local du_output = os.iorunv("du", {"-sm", dmg_staging_dir})
+    local required_size = du_output and du_output:match("^(%d+)") or "100"
+    required_size = math.ceil((tonumber(required_size) or 100) * 1.3) -- 增加30%的缓冲
+    
+    local temp_dmg = dmg_file .. ".tmp"
+    
+    -- 创建空白DMG
+    local ok = os.runv(hdiutil.program, {"create", "-size", required_size .. "m", "-fs", "HFS+", 
+                                        "-volname", config.title, temp_dmg})
+    if not ok then
+        print("Error: Failed to create temporary DMG")
+        return false
     end
     
-    -- Copy to output location
-    os.vcp(dmg_file, package:outputfile())
+    -- 挂载DMG
+    local mount_output = os.iorunv(hdiutil.program, {"attach", "-readwrite", "-noverify", "-noautoopen", temp_dmg})
+    local mount_point = mount_output and mount_output:match("/Volumes/[^\r\n]+")
     
-    -- Clean up
-    os.tryrm(bundle_dir)
+    if not mount_point then
+        print("Error: Failed to mount temporary DMG")
+        os.tryrm(temp_dmg)
+        return false
+    end
+    
+    print("DMG mounted at:", mount_point)
+    
+    -- 复制内容到挂载的DMG
+    local copy_ok = os.runv("cp", {"-R", path.join(dmg_staging_dir, appbundle_name), mount_point})
+    if not copy_ok then
+        print("Error: Failed to copy app bundle to DMG")
+        os.runv(hdiutil.program, {"detach", mount_point})
+        os.tryrm(temp_dmg)
+        return false
+    end
+    
+    -- 复制Applications链接
+    local apps_link = path.join(dmg_staging_dir, "Applications")
+    if os.islink(apps_link) then
+        os.runv("cp", {"-R", apps_link, mount_point})
+    end
+    
+    -- 设置基本的图标位置
+    local layout_script = _create_advanced_dmg_layout(package, mount_point, appbundle_name)
+    local script_file = path.join(os.tmpdir(), "dmg_layout.scpt")
+    io.writefile(script_file, layout_script)
+    
+    -- 等待Finder识别文件
+    os.sleep(2000)
+    os.runv("osascript", {script_file})
+    os.tryrm(script_file)
+    
+    -- 同步文件系统
+    os.runv("sync")
+    os.sleep(1000)
+    
+    -- 卸载DMG
+    local detach_ok = os.runv(hdiutil.program, {"detach", mount_point})
+    if not detach_ok then
+        print("Warning: Failed to detach DMG properly")
+    end
+    
+    -- 转换为只读压缩DMG
+    local convert_ok = os.runv(hdiutil.program, {"convert", temp_dmg, "-format", config.format, 
+                                               "-imagekey", "zlib-level=9", "-o", dmg_file})
+    os.tryrm(temp_dmg)
+    
+    if not convert_ok then
+        print("Error: Failed to convert DMG to final format")
+        return false
+    end
+    
+    return true
+end
+
+-- main packing function
+function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
+    local app_name = package:get("title") or package:name()
+    local appbundle_name = app_name .. ".app"
+    
+    -- 创建临时工作目录
+    local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
+    local appbundle_dir = path.join(dmg_staging_dir, appbundle_name)
+    
+    os.tryrm(dmg_staging_dir)
+    os.mkdir(dmg_staging_dir)
+    
+    -- 创建App bundle目录结构
+    os.mkdir(appbundle_dir)
+    os.mkdir(path.join(appbundle_dir, "Contents"))
+    os.mkdir(path.join(appbundle_dir, "Contents", "MacOS"))
+    os.mkdir(path.join(appbundle_dir, "Contents", "Resources"))
+    os.mkdir(path.join(appbundle_dir, "Contents", "Frameworks"))
+    
+    print("Created app bundle structure at:", appbundle_dir)
+    
+    -- 安装文件到App bundle
+    local installcmds = {}
+    _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(package):cmds())
+    for _, component in table.orderpairs(package:components()) do
+        if component:get("default") ~= false then
+            _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(component):cmds())
+        end
+    end
+    
+    -- 执行安装命令
+    print("Executing installation commands...")
+    for _, cmd in ipairs(installcmds) do
+        print("Executing: " .. cmd)
+        local ok = os.exec(cmd)
+        if not ok then
+            print("Warning: Command failed:", cmd)
+        end
+    end
+    
+    -- 复制源文件
+    print("Copying source files...")
+    local srcfiles, dstfiles = package:sourcefiles()
+    for idx, srcfile in ipairs(srcfiles) do
+        local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
+        if dstfile then
+            print("Copying:", srcfile, "->", dstfile)
+            os.vcp(srcfile, dstfile)
+        end
+    end
+    
+    -- 复制组件源文件
+    for _, component in table.orderpairs(package:components()) do
+        if component:get("default") ~= false then
+            local srcfiles, dstfiles = component:sourcefiles()
+            for idx, srcfile in ipairs(srcfiles) do
+                local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
+                if dstfile then
+                    print("Copying component file:", srcfile, "->", dstfile)
+                    os.vcp(srcfile, dstfile)
+                end
+            end
+        end
+    end
+    
+    -- 创建必要的App bundle文件
+    _create_info_plist(package, appbundle_dir)
+    _copy_icon(package, appbundle_dir)
+    
+    -- 确保主可执行文件有执行权限
+    local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
+    if os.isfile(main_executable) then
+        os.runv("chmod", {"+x", main_executable})
+        print("Main executable:", main_executable)
+    else
+        print("Warning: Main executable not found at expected location")
+    end
+    
+    -- 收集依赖库
+    _collect_deps_manually(package, appbundle_dir)
+    
+    -- 代码签名（如果配置了）
+    if codesign then
+        _sign_app_bundle(package, appbundle_dir, codesign)
+    end
+    
+    -- 创建DMG布局文件
+    _create_dmg_layout(package, dmg_staging_dir)
+    
+    -- 创建DMG文件
+    local dmg_file = package:outputfile() or _get_dmg_file(package)
     os.tryrm(dmg_file)
+    
+    print("Creating DMG file:", dmg_file)
+    local success = _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg_file)
+    
+    if success then
+        -- 优化DMG
+        _optimize_dmg(hdiutil, dmg_file)
+        
+        -- 验证DMG
+        _verify_dmg(hdiutil, dmg_file)
+        
+        -- 显示DMG信息
+        local dmg_info = os.iorunv(hdiutil.program, {"imageinfo", dmg_file})
+        if dmg_info then
+            local size = dmg_info:match("Total Bytes: (%d+)")
+            if size then
+                local size_mb = math.ceil(tonumber(size) / 1024 / 1024)
+                print(string.format("DMG created successfully: %s (%d MB)", dmg_file, size_mb))
+            else
+                print("DMG created successfully:", dmg_file)
+            end
+        end
+    else
+        print("Error: Failed to create DMG")
+    end
+    
+    -- 清理临时目录
+    os.tryrm(dmg_staging_dir)
+    
+    return success
 end
 
 function main(package)
+    -- only for macOS
     if not is_host("macosx") then
+        print("DMG packaging is only supported on macOS")
         return
     end
 
-    cprint("packing %s", package:outputfile())
+    cprint("packing %s", package:outputfile() or _get_dmg_file(package))
 
-    -- Get required tools
+    -- get required tools
     local hdiutil = _get_hdiutil()
-    local codesign = _get_codesign()
     local create_dmg = _get_create_dmg()
-    
-    if create_dmg then
-        cprint("Using create-dmg for enhanced DMG creation")
-    else
-        cprint("Using hdiutil for basic DMG creation")
-        cprint("Install create-dmg for better DMG appearance: brew install create-dmg")
-    end
+    local codesign = _get_codesign()
 
-    -- Pack DMG package
-    _pack_dmg(hdiutil, codesign, create_dmg, package)
+    -- pack dmg package
+    local success = _pack_dmg_main(hdiutil, create_dmg, codesign, package)
+    
+    if success then
+        print("DMG packaging completed successfully!")
+    else
+        print("DMG packaging failed!")
+        os.exit(1)
+    end
 end
