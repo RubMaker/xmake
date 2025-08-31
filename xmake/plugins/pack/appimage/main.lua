@@ -31,17 +31,18 @@ import(".batchcmds")
 function _get_appimagetool()
     local appimagetool = find_tool("appimagetool")
     if not appimagetool then
-        -- try to download appimagetool if not found
-        local appimagetool_url = "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-        local appimagetool_path = path.join(os.tmpdir(), "appimagetool")
-        if not os.isfile(appimagetool_path) then
-            print("appimagetool not found, downloading...")
-            os.runv("wget", {"-O", appimagetool_path, appimagetool_url})
-            os.runv("chmod", {"+x", appimagetool_path})
-        end
-        appimagetool = {program = appimagetool_path}
+    --     -- try to download appimagetool if not found
+    --     local appimagetool_url = "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+    --     local appimagetool_path = path.join(os.tmpdir(), "appimagetool")
+    --     if not os.isfile(appimagetool_path) then
+    --         print("appimagetool not found, downloading...")
+    --         os.runv("wget", {"-O", appimagetool_path, appimagetool_url})
+    --         os.runv("chmod", {"+x", appimagetool_path})
+    --     end
+    --     appimagetool = {program = appimagetool_path}
+    -- end
+        assert(appimagetool, "appimagetool need to be downloaded!")
     end
-    assert(appimagetool, "appimagetool not found and failed to download!")
     return appimagetool
 end
 
@@ -57,8 +58,36 @@ function _get_linuxdeploy()
             os.runv("chmod", {"+x", linuxdeploy_path})
         end
         linuxdeploy = {program = linuxdeploy_path}
+        -- assert(linuxdeploy, "linuxdeploy need to be downloaded!")
     end
     return linuxdeploy
+end
+
+-- get appimage-builder tool
+function _get_appimage_builder()
+    local appimage_builder = find_tool("appimage-builder")
+    if not appimage_builder then
+        print("appimage-builder not found, please install it via pip: pip3 install appimage-builder")
+        return nil
+    end
+    return appimage_builder
+end
+
+-- detect which dependency collection tool to use
+function _detect_dependency_tool(package)
+    local preferred_tool = package:get("appimage_tool") or "linuxdeploy"
+    
+    print("Preferred dependency collection tool:", preferred_tool)
+    
+    if preferred_tool == "appimage-builder" then
+        local tool = _get_appimage_builder()
+        print("appimage-builder found:", tool and tool.program or "not found")
+        return tool, "appimage-builder"
+    else -- default to linuxdeploy
+        local tool = _get_linuxdeploy()
+        print("linuxdeploy found:", tool and tool.program or "not found")
+        return tool, "linuxdeploy"
+    end
 end
 
 -- get appimage output file
@@ -69,21 +98,80 @@ end
 
 -- translate the file path for AppDir structure
 function _translate_filepath(package, filepath, appdir)
-    local prefix = package:get("prefixdir") or "/usr"
-    local relative_path = filepath
-    if filepath:startswith(package:install_rootdir()) then
-        relative_path = path.relative(filepath, package:install_rootdir())
-    end
+    -- 获取安装根目录
+    local install_rootdir = package:install_rootdir()
     
-    -- map standard directories to AppDir structure
-    if relative_path:startswith("usr/bin/") then
-        return path.join(appdir, "usr/bin", path.filename(relative_path))
-    elseif relative_path:startswith("usr/lib/") then
-        return path.join(appdir, "usr/lib", path.relative(relative_path, "usr/lib"))
-    elseif relative_path:startswith("usr/share/") then
-        return path.join(appdir, "usr/share", path.relative(relative_path, "usr/share"))
+    -- 如果路径在安装根目录下，转换为相对路径
+    if filepath:startswith(install_rootdir) then
+        local relative_path = path.relative(filepath, install_rootdir)
+        
+        -- 移除开头的 usr/ 如果存在（因为我们会添加自己的 usr 前缀）
+        if relative_path:startswith("usr/") then
+            relative_path = relative_path:sub(5) -- 移除 "usr/"
+        end
+        
+        -- 映射到AppDir的usr目录结构
+        if relative_path:startswith("bin/") then
+            return path.join(appdir, "usr", relative_path)
+        elseif relative_path:startswith("lib/") then
+            return path.join(appdir, "usr", relative_path)
+        elseif relative_path:startswith("share/") then
+            return path.join(appdir, "usr", relative_path)
+        elseif relative_path:startswith("include/") then
+            return path.join(appdir, "usr", relative_path)
+        else
+            -- 根据文件扩展名智能映射
+            local filename = path.filename(filepath)
+            local ext = path.extension(filename):lower()
+            
+            -- 二进制可执行文件 -> usr/bin
+            if ext == "" or ext == ".exe" then
+                return path.join(appdir, "usr", "bin", filename)
+            -- 库文件 -> usr/lib
+            elseif ext == ".so" or ext == ".dylib" or ext == ".dll" then
+                return path.join(appdir, "usr", "lib", filename)
+            -- 图标文件 -> usr/share/icons/hicolor
+            elseif ext == ".png" or ext == ".svg" or ext == ".ico" or ext == ".xpm" then
+                local icon_dir = path.join(appdir, "usr/share/icons/hicolor/256x256/apps")
+                return path.join(icon_dir, filename)
+            -- 桌面文件 -> usr/share/applications
+            elseif ext == ".desktop" then
+                return path.join(appdir, "usr/share/applications", filename)
+            -- 其他文件 -> usr/share/<package-name> 或基于原始路径
+            else
+                -- 尝试保持原始目录结构
+                local dirname = path.directory(relative_path)
+                if dirname and dirname ~= "." then
+                    return path.join(appdir, "usr", "share", package:name(), dirname, filename)
+                else
+                    return path.join(appdir, "usr", "share", package:name(), filename)
+                end
+            end
+        end
     else
-        return path.join(appdir, relative_path)
+        -- 对于绝对路径或其他路径，根据文件类型智能映射
+        local filename = path.filename(filepath)
+        local ext = path.extension(filename):lower()
+        
+        -- 源代码文件不应该被安装到bin目录
+        if ext == ".cpp" or ext == ".c" or ext == ".h" or ext == ".hpp" or 
+           ext == ".py" or ext == ".js" or ext == ".java" or ext == ".go" then
+            -- 源代码文件应该被跳过或放到开发目录
+            return nil -- 返回nil表示不应该被复制
+        -- 二进制文件
+        elseif ext == "" or ext == ".exe" then
+            return path.join(appdir, "usr", "bin", filename)
+        -- 库文件
+        elseif ext == ".so" or ext == ".dylib" or ext == ".dll" then
+            return path.join(appdir, "usr", "lib", filename)
+        -- 图标文件
+        elseif ext == ".png" or ext == ".svg" or ext == ".ico" or ext == ".xpm" then
+            local icon_dir = path.join(appdir, "usr/share/icons/hicolor/256x256/apps")
+            return path.join(icon_dir, filename)
+        -- 其他文件
+        else
+            return path.join(appdir, "usr", "share", package:name(), filename)
+        end
     end
 end
 
@@ -102,7 +190,9 @@ function _get_customcmd(package, appdir, installcmds, cmd)
                     dstfile = path.join(dstfile, path.filename(srcfile))
                 end
             end
-            table.insert(installcmds, string.format("install -Dpm0755 \"%s\" \"%s\"", srcfile, dstfile))
+            if dstfile then
+                table.insert(installcmds, string.format("install -Dpm0755 \"%s\" \"%s\"", srcfile, dstfile))
+            end
         end
     elseif kind == "rm" then
         local filepath = _translate_filepath(package, cmd.filepath, appdir)
@@ -143,6 +233,7 @@ end
 
 -- create desktop file
 function _create_desktop_file(package, appdir)
+    local iconname = package:get("iconname") or package:name()
     local desktop_content = string.format([[
 [Desktop Entry]
 Type=Application
@@ -151,14 +242,13 @@ Comment=%s
 Exec=%s
 Icon=%s
 Categories=%s
-Version=%s
+Version=1.0
 ]], 
         package:get("title") or package:name(),
         package:get("description") or package:get("title") or package:name(),
         package:name(),
-        package:name(),
-        package:get("category") or "Utility",
-        package:version()
+        iconname,
+        package:get("category") or "Utility"
     )
     
     local desktop_file = path.join(appdir, package:name() .. ".desktop")
@@ -168,7 +258,7 @@ end
 
 -- create AppRun script
 function _create_apprun(package, appdir)
-    local main_executable = package:get("bindir") and path.join("usr/bin", package:name()) or package:name()
+    local main_executable = path.join("usr", "bin", package:name())
     local apprun_content = string.format([[#!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
 export PATH="${HERE}/usr/bin:${PATH}"
@@ -187,17 +277,226 @@ end
 -- copy icon file
 function _copy_icon(package, appdir)
     local iconfile = package:get("iconfile")
+    local iconname = package:get("iconname") or package:name()
+    
     if iconfile and os.isfile(iconfile) then
-        local icon_dst = path.join(appdir, package:name() .. path.extension(iconfile))
+        -- 复制图标到usr/share/icons/hicolor目录
+        local icon_dir = path.join(appdir, "usr/share/icons/hicolor/256x256/apps")
+        os.mkdir(icon_dir)
+        local icon_dst = path.join(icon_dir, iconname .. path.extension(iconfile))
         os.cp(iconfile, icon_dst)
+        
+        -- 同时复制到AppDir根目录供.desktop文件使用
+        local root_icon = path.join(appdir, iconname .. path.extension(iconfile))
+        os.cp(iconfile, root_icon)
+        
         return icon_dst
     else
-        -- create a simple icon if not provided
-        local icon_dst = path.join(appdir, package:name() .. ".png")
-        -- This would need a default icon or skip if no icon provided
         print("Warning: No icon file specified for AppImage")
         return nil
     end
+end
+
+-- create AppImageBuilder recipe file
+function _create_appimage_builder_recipe(package, appdir)
+    local recipe_content = string.format([[
+version: 1
+
+script:
+  # Remove any get-pip.py and python cache
+  - rm -rf $APPDIR/.cache
+
+AppDir:
+  path: %s
+
+  app_info:
+    id: %s
+    name: %s
+    icon: %s
+    version: %s
+    exec: usr/bin/%s
+    exec_args: $@
+
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ focal main restricted'
+        key_url: 'http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3B4FE6ACC0B21F32'
+      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ focal-updates main restricted'
+
+  files:
+    exclude:
+      - usr/lib/x86_64-linux-gnu/gconv
+      - usr/share/man
+      - usr/share/doc/*/README.*
+      - usr/share/doc/*/changelog.*
+      - usr/share/doc/*/NEWS.*
+      - usr/share/doc/*/TODO.*
+
+  runtime:
+    env:
+      PATH: '${APPDIR}/usr/bin:${PATH}'
+      LD_LIBRARY_PATH: '${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}'
+
+AppImage:
+  arch: x86_64
+]], 
+        appdir,
+        package:get("bundle_id") or package:name(),
+        package:get("title") or package:name(),
+        package:get("iconname") or package:name(),
+        package:version(),
+        package:name()
+    )
+    
+    local recipe_file = path.join(path.directory(appdir), "AppImageBuilder.yml")
+    io.writefile(recipe_file, recipe_content)
+    return recipe_file
+end
+
+-- collect dependencies using linuxdeploy
+function _collect_deps_with_linuxdeploy(package, appdir, linuxdeploy)
+    print("Using linuxdeploy for dependency collection...")
+    
+    local main_executable = path.join(appdir, "usr/bin", package:name())
+    local desktop_file = path.join(appdir, package:name() .. ".desktop")
+    
+    print("Checking files for linuxdeploy:")
+    print("  Executable:", main_executable, "exists:", os.isfile(main_executable))
+    print("  Desktop file:", desktop_file, "exists:", os.isfile(desktop_file))
+    
+    local args = {
+        "--appdir", appdir
+    }
+    
+    -- add executable
+    if os.isfile(main_executable) then
+        table.insert(args, "--executable")
+        table.insert(args, main_executable)
+    end
+    
+    -- add desktop file
+    if os.isfile(desktop_file) then
+        table.insert(args, "--desktop-file")
+        table.insert(args, desktop_file)
+    end
+    
+    print("Running linuxdeploy with args:", table.concat(args, " "))
+    local ok, err = os.iorunv(linuxdeploy.program, args)
+    if not ok then
+        print("Warning: linuxdeploy failed:", err)
+        return false
+    end
+    
+    -- 检查linuxdeploy是否创建了lib目录
+    local lib_dir = path.join(appdir, "usr/lib")
+    if os.isdir(lib_dir) then
+        local libs = os.files(path.join(lib_dir, "*.so*"))
+        print("linuxdeploy collected", #libs, "libraries")
+        for _, lib in ipairs(libs) do
+            print("  -", lib)
+        end
+    else
+        print("linuxdeploy did not create lib directory")
+    end
+    
+    return true
+end
+
+-- collect dependencies using appimage-builder
+function _collect_deps_with_appimage_builder(package, appdir, appimage_builder)
+    print("Using appimage-builder for dependency collection...")
+    
+    -- create recipe file
+    local recipe_file = _create_appimage_builder_recipe(package, appdir)
+    
+    -- change to the directory containing the recipe
+    local old_cwd = os.curdir()
+    os.cd(path.directory(recipe_file))
+    
+    local ok, err = pcall(function()
+        -- run appimage-builder
+        local args = {"--recipe", path.filename(recipe_file)}
+        
+        print("Running appimage-builder with args:", table.concat(args, " "))
+        local ok, err = os.iorunv(appimage_builder.program, args)
+        if not ok then
+            error("appimage-builder failed: " .. (err or "unknown error"))
+        end
+    end)
+    
+    -- restore working directory
+    os.cd(old_cwd)
+    
+    if not ok then
+        print("Warning: appimage-builder failed:", err)
+        return false
+    end
+    return true
+end
+
+-- manually collect common dependencies using ldd
+function _collect_deps_manually(package, appdir)
+    print("Collecting dependencies manually using ldd...")
+    
+    local main_executable = path.join(appdir, "usr/bin", package:name())
+    if not os.isfile(main_executable) then
+        print("Warning: Main executable not found, skipping dependency collection")
+        return false
+    end
+    
+    print("Analyzing executable:", main_executable)
+    
+    -- get dependencies using ldd
+    local ldd_output = os.iorunv("ldd", {main_executable})
+    if not ldd_output then
+        print("Warning: ldd failed to analyze dependencies")
+        return false
+    end
+    
+    print("ldd output:")
+    print(ldd_output)
+    
+    local lib_dir = path.join(appdir, "usr/lib")
+    os.mkdir(lib_dir)
+    
+    local copied_count = 0
+    
+    -- parse ldd output and copy libraries
+    for line in ldd_output:gmatch("[^\r\n]+") do
+        local lib_path = line:match("=> ([^%s]+)")
+        if lib_path and lib_path ~= "(0x" and os.isfile(lib_path) then
+            -- skip system libraries that shouldn't be bundled
+            local lib_name = path.filename(lib_path)
+            local skip_libs = {
+                "libc.so", "libm.so", "libdl.so", "libpthread.so",
+                "librt.so", "libresolv.so", "libutil.so", "libnsl.so",
+                "ld-linux-x86-64.so", "libgcc_s.so", "libstdc++.so"
+            }
+            
+            local should_skip = false
+            for _, skip_lib in ipairs(skip_libs) do
+                if lib_name:find(skip_lib, 1, true) then
+                    should_skip = true
+                    break
+                end
+            end
+            
+            print("Checking library:", lib_path, "skip:", should_skip, "system:", lib_path:startswith("/lib/"))
+            
+            if not should_skip and not lib_path:startswith("/lib/") and not lib_path:startswith("/lib64/") then
+                local dst_path = path.join(lib_dir, lib_name)
+                if not os.isfile(dst_path) then
+                    print("Copying library:", lib_path, "->", dst_path)
+                    os.cp(lib_path, dst_path)
+                    copied_count = copied_count + 1
+                end
+            end
+        end
+    end
+    
+    print("Total libraries copied:", copied_count)
+    return true
 end
 
 -- pack appimage package
@@ -206,16 +505,24 @@ function _pack_appimage(appimagetool, package)
     local appdir_name = package:name() .. ".AppDir"
     local appdir = path.join(os.tmpdir(), appdir_name)
     os.tryrm(appdir)
+    
+    -- 创建标准的AppDir结构
     os.mkdir(appdir)
     os.mkdir(path.join(appdir, "usr"))
     os.mkdir(path.join(appdir, "usr/bin"))
     os.mkdir(path.join(appdir, "usr/lib"))
     os.mkdir(path.join(appdir, "usr/share"))
+    os.mkdir(path.join(appdir, "usr/share/applications"))
+    os.mkdir(path.join(appdir, "usr/share/icons"))
+    os.mkdir(path.join(appdir, "usr/share/icons/hicolor"))
+    os.mkdir(path.join(appdir, "usr/share/icons/hicolor/256x256"))
+    os.mkdir(path.join(appdir, "usr/share/icons/hicolor/256x256/apps"))
 
-    -- install files to AppDir
-    local prefixdir = package:get("prefixdir")
-    package:set("prefixdir", path.join(appdir, "usr"))
+    -- 设置prefixdir为/usr，这样文件会被安装到正确的usr目录
+    local original_prefixdir = package:get("prefixdir")
+    package:set("prefixdir", "/usr")
     
+    -- 安装文件到AppDir
     local installcmds = {}
     _get_installcmds(package, appdir, installcmds, batchcmds.get_installcmds(package):cmds())
     for _, component in table.orderpairs(package:components()) do
@@ -224,19 +531,24 @@ function _pack_appimage(appimagetool, package)
         end
     end
     
-    -- execute install commands
+    -- 执行安装命令
     for _, cmd in ipairs(installcmds) do
         print("Executing: " .. cmd)
         os.exec(cmd)
     end
     
-    package:set("prefixdir", prefixdir)
+    -- 恢复原始的prefixdir
+    if original_prefixdir then
+        package:set("prefixdir", original_prefixdir)
+    end
 
-    -- copy source files
+    -- 复制源文件
     local srcfiles, dstfiles = package:sourcefiles()
     for idx, srcfile in ipairs(srcfiles) do
         local dstfile = _translate_filepath(package, dstfiles[idx], appdir)
-        os.vcp(srcfile, dstfile)
+        if dstfile then
+            os.vcp(srcfile, dstfile)
+        end
     end
     
     for _, component in table.orderpairs(package:components()) do
@@ -244,52 +556,88 @@ function _pack_appimage(appimagetool, package)
             local srcfiles, dstfiles = component:sourcefiles()
             for idx, srcfile in ipairs(srcfiles) do
                 local dstfile = _translate_filepath(package, dstfiles[idx], appdir)
-                os.vcp(srcfile, dstfile)
+                if dstfile then
+                    os.vcp(srcfile, dstfile)
+                end
             end
         end
     end
 
-    -- create required AppImage files
+    -- 创建AppImage所需的文件
     _create_desktop_file(package, appdir)
     _create_apprun(package, appdir)
     _copy_icon(package, appdir)
 
-    -- use linuxdeploy for dependency resolution if available
-    local linuxdeploy = _get_linuxdeploy()
-    if linuxdeploy then
-        local main_executable = path.join(appdir, "usr/bin", package:name())
-        if os.isfile(main_executable) then
-            print("Using linuxdeploy for dependency resolution...")
-            os.vrunv(linuxdeploy.program, {
-                "--appdir", appdir,
-                "--executable", main_executable,
-                "--desktop-file", path.join(appdir, package:name() .. ".desktop")
-            })
+    -- 将.desktop文件复制到正确的位置
+    local desktop_file = path.join(appdir, package:name() .. ".desktop")
+    local desktop_usr_file = path.join(appdir, "usr/share/applications", package:name() .. ".desktop")
+    os.cp(desktop_file, desktop_usr_file)
+
+    -- 检测并使用依赖收集工具
+    local dep_tool, tool_name = _detect_dependency_tool(package)
+    local deps_collected = false
+    
+    print("Starting dependency collection with tool:", tool_name)
+    
+    if tool_name == "appimage-builder" and dep_tool then
+        print("Using appimage-builder...")
+        deps_collected = _collect_deps_with_appimage_builder(package, appdir, dep_tool)
+        if deps_collected then
+            print("Dependencies collected successfully with appimage-builder")
+            -- appimage-builder 会直接生成 AppImage，所以这里可以返回
+            return
+        end
+    else -- default to linuxdeploy
+        if dep_tool then
+            print("Using linuxdeploy...")
+            deps_collected = _collect_deps_with_linuxdeploy(package, appdir, dep_tool)
+            if deps_collected then
+                print("Dependencies collected successfully with linuxdeploy")
+                -- print(deps_collected)
+            end
+        else
+            print("No dependency collection tool found!")
         end
     end
-
-    -- build AppImage
-    local appimage_file = _get_appimage_file(package)
-    os.tryrm(appimage_file)
     
-    -- set ARCH environment variable
-    local arch = package:get("arch") or "x86_64"
-    local envs = {ARCH = arch}
+    -- 如果依赖收集失败，使用手动方式作为后备
+    if not deps_collected then
+        print("Falling back to manual dependency collection...")
+        _collect_deps_manually(package, appdir)
+    end
     
-    print(string.format("Building AppImage: %s", appimage_file))
-    os.vrunv(appimagetool.program, {appdir, appimage_file}, {envs = envs})
-
-    -- copy AppImage file to output location
-    if package:outputfile() then
-        os.vcp(appimage_file, package:outputfile())
+    -- 检查最终的lib目录内容
+    local lib_dir = path.join(appdir, "usr/lib")
+    if os.isdir(lib_dir) then
+        local all_files = os.files(path.join(lib_dir, "*"))
+        print("Final lib directory contents (", #all_files, "files):")
+        for _, file in ipairs(all_files) do
+            print("  -", file)
+        end
+    else
+        print("Warning: lib directory was not created!")
     end
 
-    -- cleanup
+    -- 使用 appimagetool 构建最终的 AppImage（如果不是用 appimage-builder）
+    if tool_name ~= "appimage-builder" or not deps_collected then
+        local appimage_file = package:outputfile() or _get_appimage_file(package)
+        os.tryrm(appimage_file)
+        
+        -- 设置架构环境变量
+        local arch = package:get("arch") or "x86_64"
+        local envs = {ARCH = arch}
+        
+        print(string.format("Building AppImage: %s", appimage_file))
+        os.vrunv(appimagetool.program, {appdir, appimage_file}, {envs = envs})
+    end
+
+    -- 清理临时目录
     os.tryrm(appdir)
 end
 
 function main(package)
     if not is_host("linux") then
+        print("AppImage packaging is only supported on Linux")
         return
     end
 
@@ -300,4 +648,6 @@ function main(package)
 
     -- pack appimage
     _pack_appimage(appimagetool, package)
+    
+    print("AppImage packaging completed!")
 end
