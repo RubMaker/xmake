@@ -493,7 +493,7 @@ function _pack_dmg(hdiutil, create_dmg, codesign, package)
     -- 使用create-dmg创建更美观的DMG
     if create_dmg then
         print("Creating DMG with create-dmg...")
-        local dmg_title = package:get("dmg_title") or app_name
+        local dmg_title = package:get("title") or app_name
         local dmg_size = package:get("dmg_size") or "200m"
         
         local args = {
@@ -536,7 +536,7 @@ function _pack_dmg(hdiutil, create_dmg, codesign, package)
         
         -- 创建空白DMG
         os.runv(hdiutil.program, {"create", "-size", required_size .. "m", "-fs", "HFS+", 
-                                  "-volname", package:get("dmg_title") or app_name, temp_dmg})
+                                  "-volname", package:get("title") or app_name, temp_dmg})
         
         -- 挂载DMG
         local mount_output = os.iorunv(hdiutil.program, {"attach", "-readwrite", "-noverify", "-noautoopen", temp_dmg})
@@ -574,7 +574,7 @@ tell application "Finder"
         delay 2
     end tell
 end tell
-]], package:get("dmg_title") or app_name, appbundle_name)
+]], package:get("title") or app_name, appbundle_name)
             
             local applescript_file = path.join(os.tmpdir(), "dmg_layout.scpt")
             io.writefile(applescript_file, script)

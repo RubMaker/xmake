@@ -79,6 +79,13 @@ local apis = {
         "xpack_component.set_description",
         -- enable/disable this component by default
         "xpack_component.set_default"
+        -- set dmg size
+        "xpack_dmg_size"
+        -- set dmg volicon
+        "xpack_dmg_volicon"
+        -- set dmg background
+        "xpack_dmg_background"
+        
     },
     paths = {
         -- set the spec file path, support the custom variable pattern, e.g. set_specfile("", {pattern = "%${([^\n]-)}"})
