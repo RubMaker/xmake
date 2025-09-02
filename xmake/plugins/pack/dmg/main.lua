@@ -53,10 +53,18 @@ function _get_codesign()
     return codesign
 end
 
--- get dmg output file
+-- get dmg output file (修复文件名生成)
 function _get_dmg_file(package)
     local filename = string.format("%s-%s.dmg", package:name(), package:version())
-    return path.absolute(path.join(path.directory(package:outputfile() or ""), filename))
+    local output_dir = path.directory(package:outputfile() or "build")
+    local dmg_path = path.absolute(path.join(output_dir, filename))
+    
+    -- 确保只有一个.dmg扩展名
+    if dmg_path:match("%.dmg%.dmg$") then
+        dmg_path = dmg_path:gsub("%.dmg%.dmg$", ".dmg")
+    end
+    
+    return dmg_path
 end
 
 -- translate the file path for app bundle structure
@@ -197,7 +205,6 @@ function _get_installcmds(package, appbundle_dir, installcmds, cmds)
 end
 
 -- create Info.plist file
--- create Info.plist file
 function _create_info_plist(package, appbundle_dir)
     local bundle_id = string.format("app.%s", package:name())
     local executable_name = package:name()
@@ -252,7 +259,6 @@ function _create_info_plist(package, appbundle_dir)
     io.writefile(plist_file, plist_content)
     return plist_file
 end
-
 
 -- copy and convert icon file
 function _copy_icon(package, appbundle_dir)
@@ -318,7 +324,7 @@ function _copy_icon(package, appbundle_dir)
     end
 end
 
--- collect dependencies using otool and install_name_tool
+-- collect dependencies using otool and install_name_tool (改进版)
 function _collect_deps_manually(package, appbundle_dir)
     print("Collecting dependencies manually using otool...")
     
@@ -443,234 +449,6 @@ function _sign_app_bundle(package, appbundle_dir, codesign)
     return true
 end
 
--- pack dmg package
-function _pack_dmg(hdiutil, create_dmg, codesign, package)
-    local app_name = package:get("title") or package:name()
-    local appbundle_name = app_name .. ".app"
-    
-    -- 创建临时工作目录
-    local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
-    local appbundle_dir = path.join(dmg_staging_dir, appbundle_name)
-    
-    os.tryrm(dmg_staging_dir)
-    os.mkdir(dmg_staging_dir)
-    
-    -- 创建App bundle目录结构
-    os.mkdir(appbundle_dir)
-    os.mkdir(path.join(appbundle_dir, "Contents"))
-    os.mkdir(path.join(appbundle_dir, "Contents", "MacOS"))
-    os.mkdir(path.join(appbundle_dir, "Contents", "Resources"))
-    os.mkdir(path.join(appbundle_dir, "Contents", "Frameworks"))
-    
-    -- 安装文件到App bundle
-    local installcmds = {}
-    _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(package):cmds())
-    for _, component in table.orderpairs(package:components()) do
-        if component:get("default") ~= false then
-            _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(component):cmds())
-        end
-    end
-    
-    -- 执行安装命令
-    for _, cmd in ipairs(installcmds) do
-        print("Executing: " .. cmd)
-        os.exec(cmd)
-    end
-    
-    -- 复制源文件
-    local srcfiles, dstfiles = package:sourcefiles()
-    for idx, srcfile in ipairs(srcfiles) do
-        local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
-        if dstfile then
-            os.vcp(srcfile, dstfile)
-        end
-    end
-    
-    for _, component in table.orderpairs(package:components()) do
-        if component:get("default") ~= false then
-            local srcfiles, dstfiles = component:sourcefiles()
-            for idx, srcfile in ipairs(srcfiles) do
-                local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
-                if dstfile then
-                    os.vcp(srcfile, dstfile)
-                end
-            end
-        end
-    end
-    
-    -- 创建Info.plist文件
-    _create_info_plist(package, appbundle_dir)
-    
-    -- 复制图标文件
-    _copy_icon(package, appbundle_dir)
-    
-    -- 确保主可执行文件有执行权限
-    local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
-    if os.isfile(main_executable) then
-        os.runv("chmod", {"+x", main_executable})
-    end
-    
-    -- 收集依赖库
-    _collect_deps_manually(package, appbundle_dir)
-    
-    -- 代码签名（跳过，不是必需的）
-    -- if codesign then
-    --     _sign_app_bundle(package, appbundle_dir, codesign)
-    -- end
-    
-    -- 创建DMG布局
-    _create_dmg_layout(package, dmg_staging_dir)
-    
-    local dmg_file = package:outputfile() or _get_dmg_file(package)
-    os.tryrm(dmg_file)
-    
-    -- 使用create-dmg创建更美观的DMG
-    if create_dmg then
-        print("Creating DMG with create-dmg...")
-        local dmg_title = package:get("title") or app_name
-        local dmg_size = package:get("dmg_size") or "200m"
-        
-        local args = {
-            "--volname", dmg_title,
-            "--volicon", package:get("dmg_volicon") or "",
-            "--window-pos", "200", "120",
-            "--window-size", "600", "400",
-            "--icon-size", "100",
-            "--icon", appbundle_name, "175", "220",
-            "--hide-extension", appbundle_name,
-            "--app-drop-link", "425", "220"
-        }
-        
-        -- 添加背景图片（如果有）
-        local background_file = package:get("dmg_background")
-        if background_file and os.isfile(background_file) then
-            table.insert(args, "--background")
-            table.insert(args, background_file)
-        end
-        
-        table.insert(args, dmg_file)
-        table.insert(args, dmg_staging_dir)
-        
-        local ok = os.runv(create_dmg.program, args)
-        if not ok then
-            print("create-dmg failed, falling back to hdiutil")
-            create_dmg = nil
-        end
-    end
-    
-    -- 使用hdiutil创建基本DMG（如果create-dmg不可用或失败）
-    if not create_dmg then
-        print("Creating DMG with hdiutil...")
-        
-        -- 计算需要的磁盘大小
-        local required_size = os.runv("du", {"-sm", dmg_staging_dir}):match("^(%d+)")
-        required_size = math.ceil((tonumber(required_size) or 100) * 1.2) -- 增加20%的缓冲
-        
-        local temp_dmg = dmg_file .. ".tmp"
-        
-        -- 创建空白DMG
-        os.runv(hdiutil.program, {"create", "-size", required_size .. "m", "-fs", "HFS+", 
-                                  "-volname", package:get("title") or app_name, temp_dmg})
-        
-        -- 挂载DMG
-        local mount_output = os.iorunv(hdiutil.program, {"attach", "-readwrite", "-noverify", "-noautoopen", temp_dmg})
-        local mount_point = mount_output:match("/Volumes/[^\r\n]+")
-        
-        if mount_point then
-            print("DMG mounted at:", mount_point)
-            
-            -- 复制内容到挂载的DMG
-            os.runv("cp", {"-R", path.join(dmg_staging_dir, appbundle_name), mount_point})
-            
-            -- 复制Applications链接
-            local apps_link = path.join(dmg_staging_dir, "Applications")
-            if os.islink(apps_link) then
-                os.runv("cp", {"-R", apps_link, mount_point})
-            end
-            
-            -- 设置DMG图标位置（使用AppleScript）
-            local script = string.format([[
-tell application "Finder"
-    tell disk "%s"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set the bounds of container window to {400, 100, 1000, 500}
-        set viewOptions to the icon view options of container window
-        set arrangement of viewOptions to not arranged
-        set icon size of viewOptions to 100
-        set position of item "%s" of container window to {175, 220}
-        set position of item "Applications" of container window to {425, 220}
-        close
-        open
-        update without registering applications
-        delay 2
-    end tell
-end tell
-]], package:get("title") or app_name, appbundle_name)
-            
-            local applescript_file = path.join(os.tmpdir(), "dmg_layout.scpt")
-            io.writefile(applescript_file, script)
-            os.runv("osascript", {applescript_file})
-            os.tryrm(applescript_file)
-            
-            -- 卸载DMG
-            os.runv(hdiutil.program, {"detach", mount_point})
-            
-            -- 转换为只读DMG
-            os.runv(hdiutil.program, {"convert", temp_dmg, "-format", "UDZO", "-imagekey", "zlib-level=9", "-o", dmg_file})
-            os.tryrm(temp_dmg)
-        else
-            print("Error: Failed to mount temporary DMG")
-            return false
-        end
-    end
-    
-    print("Total libraries copied:", copied_count or 0)
-    return true
-end
-
--- create DMG volume license (removed, not required)
--- function _create_dmg_license(package, dmg_staging_dir)
---     return nil
--- end
-
--- create readme file (removed, not required) 
--- function _create_dmg_readme(package, dmg_staging_dir)
---     return nil
--- end
-
--- compress and optimize DMG
-function _optimize_dmg(hdiutil, dmg_file)
-    print("Optimizing DMG...")
-    local temp_dmg = dmg_file .. ".temp"
-    
-    -- 使用最高压缩级别重新压缩DMG
-    local ok = os.runv(hdiutil.program, {"convert", dmg_file, "-format", "UDZO", 
-                                        "-imagekey", "zlib-level=9", "-o", temp_dmg})
-    if ok then
-        os.mv(temp_dmg, dmg_file)
-        print("DMG optimization completed")
-    else
-        print("Warning: DMG optimization failed")
-        os.tryrm(temp_dmg)
-    end
-end
-
--- verify dmg integrity
-function _verify_dmg(hdiutil, dmg_file)
-    print("Verifying DMG integrity...")
-    local ok = os.runv(hdiutil.program, {"verify", dmg_file})
-    if ok then
-        print("DMG verification passed")
-        return true
-    else
-        print("Warning: DMG verification failed")
-        return false
-    end
-end
-
 -- get dmg configuration (simplified)
 function _get_dmg_config(package)
     local config = {
@@ -680,72 +458,7 @@ function _get_dmg_config(package)
     return config
 end
 
--- create advanced DMG layout with AppleScript (simplified)
-function _create_advanced_dmg_layout(package, mount_point, appbundle_name)
-    local config = _get_dmg_config(package)
-    
-    -- 等待文件系统同步
-    os.runv("sync")
-    
-    local script = string.format([[
-tell application "Finder"
-    tell disk "%s"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set the bounds of container window to {400, 100, 1000, 500}
-        set viewOptions to the icon view options of container window
-        set arrangement of viewOptions to not arranged
-        set icon size of viewOptions to 100
-        
-        -- 设置图标位置
-        set position of item "%s" of container window to {175, 220}
-        set position of item "Applications" of container window to {425, 220}
-        
-        close
-        open
-        update without registering applications
-        delay 5
-        eject
-    end tell
-end tell
-]], 
-        config.title,
-        appbundle_name
-    )
-    
-    return script
-end
-
--- create enhanced DMG (simplified)
-function _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg_file)
-    local config = _get_dmg_config(package)
-    local appbundle_name = (package:get("title") or package:name()) .. ".app"
-    
-    if create_dmg then
-        print("Creating DMG with create-dmg...")
-        local args = {
-            "--volname", config.title,
-            "--window-pos", "200", "120",
-            "--window-size", "600", "400",
-            "--icon-size", "100",
-            "--icon", appbundle_name, "175", "220",
-            "--hide-extension", appbundle_name,
-            "--app-drop-link", "425", "220",
-            dmg_file,
-            dmg_staging_dir
-        }
-        
-        local ok = os.runv(create_dmg.program, args)
-        return ok
-    else
-        print("Creating basic DMG with hdiutil...")
-        return _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, appbundle_name)
-    end
-end
-
--- create basic DMG using hdiutil (simplified)
+-- create basic DMG using hdiutil (完全修复版)
 function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, appbundle_name)
     print("Starting basic DMG creation...")
     
@@ -768,8 +481,9 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
     
     print("Required DMG size:", required_size .. "MB")
     
-    -- 使用更保守的临时文件名（不包含.dmg扩展名）
-    local temp_dmg = path.join(os.tmpdir(), package:name() .. "_temp")
+    -- 创建唯一的临时文件名，避免冲突
+    local temp_name = string.format("%s_%s_temp.dmg", package:name(), os.date("%Y%m%d_%H%M%S"))
+    local temp_dmg = path.join(os.tmpdir(), temp_name)
     os.tryrm(temp_dmg) -- 清理可能存在的旧文件
     
     print("Creating temporary DMG:", temp_dmg)
@@ -783,7 +497,7 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
         temp_dmg
     }
     
-    print("hdiutil command:", table.concat(create_args, " "))
+    print("hdiutil create command:", hdiutil.program, table.concat(create_args, " "))
     
     local ok, errors = os.iorunv(hdiutil.program, create_args)
     if not ok then
@@ -799,15 +513,27 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
         
         if not ok then
             print("Error: Both attempts to create DMG failed")
+            if errors then
+                print("Final error output:", errors)
+            end
             return false
         end
     end
     
     print("Temporary DMG created successfully")
     
+    -- 验证临时文件存在
+    if not os.isfile(temp_dmg) then
+        print("Error: Temporary DMG file was not created:", temp_dmg)
+        return false
+    end
+    
     -- 挂载DMG
     print("Mounting temporary DMG...")
-    local mount_output, mount_errors = os.iorunv(hdiutil.program, {"attach", "-readwrite", "-noverify", "-noautoopen", temp_dmg})
+    local mount_args = {"attach", "-readwrite", "-noverify", "-noautoopen", temp_dmg}
+    print("hdiutil attach command:", hdiutil.program, table.concat(mount_args, " "))
+    
+    local mount_output, mount_errors = os.iorunv(hdiutil.program, mount_args)
     
     if not mount_output then
         print("Error: Failed to mount temporary DMG")
@@ -823,6 +549,7 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
     
     if not mount_point then
         print("Error: Could not determine mount point from output")
+        print("Full mount output was:", mount_output)
         os.tryrm(temp_dmg)
         return false
     end
@@ -881,8 +608,15 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
         os.runv(hdiutil.program, {"detach", mount_point, "-force"})
     end
     
-    -- 转换为只读压缩DMG
+    -- 转换为只读压缩DMG（关键修复：确保正确的文件名）
     print("Converting to compressed DMG...")
+    
+    -- 确保最终文件名正确
+    if dmg_file:match("%.dmg%.tmp%.dmg$") then
+        dmg_file = dmg_file:gsub("%.dmg%.tmp%.dmg$", ".dmg")
+        print("Fixed final DMG filename:", dmg_file)
+    end
+    
     local convert_args = {
         "convert", 
         temp_dmg, 
@@ -891,7 +625,7 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
         "-o", dmg_file
     }
     
-    print("Convert command:", table.concat(convert_args, " "))
+    print("Convert command:", hdiutil.program, table.concat(convert_args, " "))
     local convert_ok, convert_errors = os.iorunv(hdiutil.program, convert_args)
     
     if not convert_ok then
@@ -910,7 +644,40 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
     return true
 end
 
--- main packing function
+-- create enhanced DMG (修复版)
+function _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg_file)
+    local config = _get_dmg_config(package)
+    local appbundle_name = (package:get("title") or package:name()) .. ".app"
+    
+    -- 确保输出文件名正确
+    if dmg_file:match("%.dmg%.tmp%.dmg$") then
+        dmg_file = dmg_file:gsub("%.dmg%.tmp%.dmg$", ".dmg")
+        print("Corrected DMG filename:", dmg_file)
+    end
+    
+    if create_dmg then
+        print("Creating DMG with create-dmg...")
+        local args = {
+            "--volname", config.title,
+            "--window-pos", "200", "120",
+            "--window-size", "600", "400",
+            "--icon-size", "100",
+            "--icon", appbundle_name, "175", "220",
+            "--hide-extension", appbundle_name,
+            "--app-drop-link", "425", "220",
+            dmg_file,
+            dmg_staging_dir
+        }
+        
+        local ok = os.runv(create_dmg.program, args)
+        return ok
+    else
+        print("Creating basic DMG with hdiutil...")
+        return _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, appbundle_name)
+    end
+end
+
+-- 主打包函数（修复版）
 function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     local app_name = package:get("title") or package:name()
     local appbundle_name = app_name .. ".app"
@@ -999,20 +766,16 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     -- 创建DMG布局文件
     _create_dmg_layout(package, dmg_staging_dir)
     
-    -- 获取最终DMG文件路径（确保正确的文件名）
-    local dmg_file = package:outputfile()
-    if not dmg_file then
-        -- 使用自定义函数生成文件名，确保只有一个.dmg扩展名
-        local filename = string.format("%s-%s.dmg", package:name(), package:version())
-        local output_dir = path.directory(package:outputfile() or "build")
-        dmg_file = path.absolute(path.join(output_dir, filename))
-    end
+    -- 获取正确的DMG文件路径
+    local dmg_file = package:outputfile() or _get_dmg_file(package)
     
-    -- 确保DMG文件名正确（移除重复的扩展名）
+    -- 关键修复：清理文件名中的重复扩展名
     if dmg_file:match("%.dmg%.tmp%.dmg$") then
         dmg_file = dmg_file:gsub("%.dmg%.tmp%.dmg$", ".dmg")
+        print("Corrected final DMG filename:", dmg_file)
     elseif dmg_file:match("%.tmp%.dmg$") then
         dmg_file = dmg_file:gsub("%.tmp%.dmg$", ".dmg")
+        print("Corrected final DMG filename:", dmg_file)
     end
     
     os.tryrm(dmg_file)
@@ -1048,6 +811,37 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     return success
 end
 
+-- compress and optimize DMG
+function _optimize_dmg(hdiutil, dmg_file)
+    print("Optimizing DMG...")
+    local temp_optimize = dmg_file .. ".optimizing"
+    
+    -- 使用最高压缩级别重新压缩DMG
+    local ok = os.runv(hdiutil.program, {"convert", dmg_file, "-format", "UDZO", 
+                                        "-imagekey", "zlib-level=9", "-o", temp_optimize})
+    if ok then
+        os.mv(temp_optimize, dmg_file)
+        print("DMG optimization completed")
+    else
+        print("Warning: DMG optimization failed")
+        os.tryrm(temp_optimize)
+    end
+end
+
+-- verify dmg integrity
+function _verify_dmg(hdiutil, dmg_file)
+    print("Verifying DMG integrity...")
+    local ok = os.runv(hdiutil.program, {"verify", dmg_file})
+    if ok then
+        print("DMG verification passed")
+        return true
+    else
+        print("Warning: DMG verification failed")
+        return false
+    end
+end
+
+-- main function (完全修复版)
 function main(package)
     -- only for macOS
     if not is_host("macosx") then
@@ -1055,7 +849,25 @@ function main(package)
         return
     end
 
-    cprint("packing %s", package:outputfile() or _get_dmg_file(package))
+    -- 获取正确的DMG文件路径
+    local dmg_file = package:outputfile() or _get_dmg_file(package)
+    
+    -- 关键修复：清理任何错误的文件名模式
+    local original_dmg_file = dmg_file
+    if dmg_file:match("%.dmg%.tmp%.dmg$") then
+        dmg_file = dmg_file:gsub("%.dmg%.tmp%.dmg$", ".dmg")
+    elseif dmg_file:match("%.tmp%.dmg$") then
+        dmg_file = dmg_file:gsub("%.tmp%.dmg$", ".dmg")
+    elseif dmg_file:match("%.dmg%.dmg$") then
+        dmg_file = dmg_file:gsub("%.dmg%.dmg$", ".dmg")
+    end
+    
+    if dmg_file ~= original_dmg_file then
+        print("Corrected DMG filename from:", original_dmg_file)
+        print("                        to:", dmg_file)
+    end
+
+    cprint("packing %s", dmg_file)
 
     -- get required tools
     local hdiutil = _get_hdiutil()
@@ -1067,6 +879,15 @@ function main(package)
     
     if success then
         print("DMG packaging completed successfully!")
+        print("Final output file:", dmg_file)
+        
+        -- 验证文件确实存在且命名正确
+        if os.isfile(dmg_file) then
+            local file_info = os.iorunv("ls", {"-lh", dmg_file})
+            print("File details:", file_info)
+        else
+            print("Warning: Expected DMG file not found at:", dmg_file)
+        end
     else
         print("DMG packaging failed!")
         os.exit(1)
