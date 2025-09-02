@@ -30,6 +30,12 @@ import(".batchcmds")
 -- get the hdiutil tool
 function _get_hdiutil()
     local hdiutil = find_tool("hdiutil")
+    if not hdiutil then
+        hdiutil_path = "usr/bin/hdiutil"
+        if os.isfile(hdiutil_path) then
+            hdiutil = {program = hdiutil_path}
+        end
+    end
     assert(hdiutil, "hdiutil not found! DMG packaging requires macOS system tools.")
     return hdiutil
 end
