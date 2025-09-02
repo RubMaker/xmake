@@ -324,61 +324,115 @@ function _copy_icon(package, appbundle_dir)
     end
 end
 
--- collect dependencies using otool and install_name_tool 
-function _collect_deps_recursive(executable, frameworks_dir, seen)
+-- collect dependencies using otool and install_name_tool (改进版)
+function _collect_deps_manually(package, appbundle_dir)
+    print("Collecting dependencies manually using otool...")
+    
+    local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
+    if not os.isfile(main_executable) then
+        print("Warning: Main executable not found at:", main_executable)
+        
+        -- 尝试查找可执行文件
+        local macos_dir = path.join(appbundle_dir, "Contents", "MacOS")
+        if os.isdir(macos_dir) then
+            local files = os.files(path.join(macos_dir, "*"))
+            for _, file in ipairs(files) do
+                if os.isfile(file) then
+                    print("Found executable candidate:", file)
+                    main_executable = file
+                    break
+                end
+            end
+        end
+        
+        if not os.isfile(main_executable) then
+            print("Error: No executable found, skipping dependency collection")
+            return false
+        end
+    end
+    
+    print("Analyzing executable:", main_executable)
+    
+    -- 检查文件是否为可执行文件
+    local file_info = os.iorunv("file", {main_executable})
+    print("File type:", file_info)
+    
+    -- 如果不是Mach-O可执行文件，跳过依赖收集
+    if not file_info or not file_info:match("Mach%-O") then
+        print("Warning: File is not a Mach-O executable, skipping dependency collection")
+        return true
+    end
+    
+    -- get dependencies using otool
     local otool = find_tool("otool")
+    if not otool then
+        print("Warning: otool not found, cannot collect dependencies")
+        return false
+    end
+    
+    local otool_output, otool_errors = os.iorunv(otool.program, {"-L", main_executable})
+    if not otool_output then
+        print("Warning: otool failed to analyze dependencies")
+        if otool_errors then
+            print("otool error output:", otool_errors)
+        end
+        return false
+    end
+    
+    print("otool output:")
+    print(otool_output)
+    
+    local frameworks_dir = path.join(appbundle_dir, "Contents", "Frameworks")
+    os.mkdir(frameworks_dir)
+    
+    local copied_count = 0
     local install_name_tool = find_tool("install_name_tool")
-    seen = seen or {}
-
-    -- 运行 otool -L
-    local otool_output = os.iorunv(otool.program, {"-L", executable})
-
+    
+    -- parse otool output and copy libraries
     for line in otool_output:gmatch("[^\r\n]+") do
         local lib_path = line:match("^%s*([^%s]+%.dylib)")
-        if lib_path
-            and not lib_path:startswith("/usr/lib/")
-            and not lib_path:startswith("/System/") then
-
-            -- 去重
-            if not seen[lib_path] and os.isfile(lib_path) then
-                seen[lib_path] = true
-                local lib_name = path.filename(lib_path)
-                local dst_path = path.join(frameworks_dir, lib_name)
-
-                -- 拷贝到 Frameworks
-                if not os.isfile(dst_path) then
-                    os.cp(lib_path, dst_path)
-
-                    -- 修改 install_name
-                    os.runv(install_name_tool.program, {
-                        "-id", "@executable_path/../Frameworks/" .. lib_name, dst_path
-                    })
-                    os.runv(install_name_tool.program, {
-                        "-change", lib_path,
-                        "@executable_path/../Frameworks/" .. lib_name,
-                        executable
-                    })
-
-                    -- 递归解析这个库的依赖
-                    _collect_deps_recursive(dst_path, frameworks_dir, seen)
+        if lib_path and not lib_path:startswith("/usr/lib/") and not lib_path:startswith("/System/") and os.isfile(lib_path) then
+            local lib_name = path.filename(lib_path)
+            local dst_path = path.join(frameworks_dir, lib_name)
+            
+            if not os.isfile(dst_path) then
+                print("Copying library:", lib_path, "->", dst_path)
+                local copy_ok = os.runv("cp", {lib_path, dst_path})
+                if copy_ok then
+                    copied_count = copied_count + 1
+                    
+                    -- 修改库的install name
+                    if install_name_tool then
+                        local new_install_name = "@executable_path/../Frameworks/" .. lib_name
+                        os.runv(install_name_tool.program, {"-id", new_install_name, dst_path})
+                    end
+                else
+                    print("Warning: Failed to copy library:", lib_path)
                 end
             end
         end
     end
+    
+    -- 修改主可执行文件中的库路径引用
+    if install_name_tool and copied_count > 0 then
+        print("Updating library references in main executable...")
+        for line in otool_output:gmatch("[^\r\n]+") do
+            local lib_path = line:match("^%s*([^%s]+%.dylib)")
+            if lib_path and not lib_path:startswith("/usr/lib/") and not lib_path:startswith("/System/") then
+                local lib_name = path.filename(lib_path)
+                local new_path = "@executable_path/../Frameworks/" .. lib_name
+                local dst_lib = path.join(frameworks_dir, lib_name)
+                if os.isfile(dst_lib) then
+                    os.runv(install_name_tool.program, {"-change", lib_path, new_path, main_executable})
+                end
+            end
+        end
+    end
+    
+    print("Total libraries copied:", copied_count)
+    return true
 end
 
--- collect_deps_manually
-function _collect_deps_manually(target, bundle_dir)
-    local frameworks_dir = path.join(bundle_dir, "Contents/Frameworks")
-    os.mkdir(frameworks_dir)
-
-    local targetdir = target:targetdir()
-    local filename = target:filename()
-    local main_executable = path.join(targetdir, filename)
-
-    cprint("Recursively collecting dependencies for %s", filename)
-    _collect_deps_recursive(main_executable, frameworks_dir, {})
-end
 -- create DMG background and layout (simplified)
 function _create_dmg_layout(package, dmg_staging_dir)
     -- 创建应用程序链接
