@@ -73,19 +73,18 @@ local apis = {
         "xpack.set_iconname",
         -- set appimage tool
         "xpack.set_appimage_tool",
+        -- set dmg size
+        "xpack.set_dmg_size",
+        -- set dmg volicon
+        "xpack.set_dmg_volicon",
+        -- set dmg background
+        "xpack.set_dmg_background",
         -- set package component title
         "xpack_component.set_title",
         -- set package component description
         "xpack_component.set_description",
         -- enable/disable this component by default
-        "xpack_component.set_default",
-        -- set dmg size
-        "xpack_dmg_size",
-        -- set dmg volicon
-        "xpack_dmg_volicon",
-        -- set dmg background
-        "xpack_dmg_background"
-
+        "xpack_component.set_default"
     },
     paths = {
         -- set the spec file path, support the custom variable pattern, e.g. set_specfile("", {pattern = "%${([^\n]-)}"})
