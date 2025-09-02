@@ -34,6 +34,7 @@ function _get_hdiutil()
         hdiutil_path = "usr/bin/hdiutil"
         if os.isfile(hdiutil_path) then
             hdiutil = {program = hdiutil_path}
+            assert(hdiutil, "hdiutil not found! DMG packaging requires macOS system tools.!!!!!!!!")
         end
     end
     assert(hdiutil, "hdiutil not found! DMG packaging requires macOS system tools.")
