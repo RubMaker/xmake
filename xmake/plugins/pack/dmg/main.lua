@@ -784,9 +784,6 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     local success = _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg_file)
     
     if success then
-        -- 优化DMG
-        _optimize_dmg(hdiutil, dmg_file)
-        
         -- 验证DMG
         _verify_dmg(hdiutil, dmg_file)
         
@@ -809,23 +806,6 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     os.tryrm(dmg_staging_dir)
     
     return success
-end
-
--- compress and optimize DMG
-function _optimize_dmg(hdiutil, dmg_file)
-    print("Optimizing DMG...")
-    local temp_optimize = dmg_file .. ".optimizing"
-    
-    -- 使用最高压缩级别重新压缩DMG
-    local ok = os.runv(hdiutil.program, {"convert", dmg_file, "-format", "UDZO", 
-                                        "-imagekey", "zlib-level=9", "-o", temp_optimize})
-    if ok then
-        os.mv(temp_optimize, dmg_file)
-        print("DMG optimization completed")
-    else
-        print("Warning: DMG optimization failed")
-        os.tryrm(temp_optimize)
-    end
 end
 
 -- verify dmg integrity
