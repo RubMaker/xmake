@@ -172,7 +172,10 @@ function _create_staging_dir(package, app_source, appbundle_name, bg_image)
     local staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
     print("1.Creating staging directory at:", staging_dir)
     -- clean and create staging directory
-    os.tryrm(staging_dir)
+    if os.isdir(staging_dir) then
+        print("Staging directory already exists, removing...")
+        os.tryrm(staging_dir)
+    end
     print("Removed existing staging directory if any")
     os.mkdir(staging_dir)
     print("2.Created staging directory:", staging_dir)
