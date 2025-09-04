@@ -141,8 +141,9 @@ function _find_background_image(package)
     
     for _, bg_path in ipairs(bg_paths) do
         if os.isfile(bg_path) then
-            print("Found background image at:", bg_path)
-            return bg_path
+            ab_bg_path = path.absolute(bg_path)
+            print("Found background image at:", ab_bg_path)
+            return ab_bg_path
         end
     end
     
@@ -196,8 +197,8 @@ function _create_staging_dir(package, app_source, appbundle_name, bg_image)
         print("  From:", bg_image)
         print("  To:", bg_dest)
         
-        local bg_copy_ok = os.runv("cp", bg_image, bg_dest)
-        if not bg_copy_ok then
+        os.vcp(bg_image, bg_dest)
+        if not os.isfile(bg_dest) then
             print("Warning: Failed to copy background image")
         end
     end
