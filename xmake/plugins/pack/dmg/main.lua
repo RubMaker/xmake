@@ -347,7 +347,7 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     local mkdir_tmp_dir_ok = os.mkdir(dmg_staging_dir)
     if not mkdir_tmp_dir_ok then
         print("Error: Failed to create temporary staging directory:", dmg_staging_dir)
-        return false
+        -- return false
     end
 
     print("mkdir_tmp_dir_ok:", mkdir_tmp_dir_ok)
