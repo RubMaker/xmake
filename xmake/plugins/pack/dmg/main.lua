@@ -347,7 +347,8 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     local mkdir_tmp_dir_ok = os.runv("mkdir", {"-p", dmg_staging_dir})
 
     print("Created DMG staging directory:", dmg_staging_dir)
-    
+    print("mkdir_tmp_dir_ok:", mkdir_tmp_dir_ok)
+
     -- 复制.app bundle到staging目录
     print("Copying .app bundle to staging directory...")
     local staging_app = path.join(dmg_staging_dir, appbundle_name)
