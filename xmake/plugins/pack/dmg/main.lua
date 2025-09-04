@@ -170,15 +170,12 @@ end
 -- create dmg staging directory
 function _create_staging_dir(package, app_source, appbundle_name, bg_image)
     local staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
-    print("1.Creating staging directory at:", staging_dir)
     -- clean and create staging directory
     if os.isdir(staging_dir) then
-        print("Staging directory already exists, removing...")
         os.vrunv("rm", {"-rf", staging_dir})
     end
-    print("Removed existing staging directory if any")
     os.mkdir(staging_dir)
-    print("2.Created staging directory:", staging_dir)
+    print("Created staging directory:", staging_dir)
     
     -- copy .app bundle to staging
     local app_dest = path.join(staging_dir, appbundle_name)
@@ -186,8 +183,8 @@ function _create_staging_dir(package, app_source, appbundle_name, bg_image)
     print("  From:", app_source)
     print("  To:", app_dest)
     
-    local copy_ok = os.runv("cp", {"-R", app_source, app_dest})
-    if not copy_ok then
+    os.vcp(app_source, app_dest)
+    if not os.isdir(app_dest) then
         print("Error: Failed to copy app bundle to staging directory")
         return nil
     end
