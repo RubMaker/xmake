@@ -63,26 +63,63 @@ end
 
 -- find existing .app bundle in the build directory
 function _find_app_bundle(package)
-    -- 首先尝试在输出目录中查找
-    local output_dir = path.directory(package:outputfile() or "build")
-    print("output_dir:", output_dir)
+    -- 获取二进制文件的目录
+    local binary_dir = nil
+    
+    -- 方法1: 从package的outputfile获取目录
+    if package:outputfile() then
+        binary_dir = path.directory(package:outputfile())
+        print("Binary directory from outputfile:", binary_dir)
+    end
+    
+    -- 方法2: 尝试从target获取输出目录
+    if not binary_dir then
+        local target = package:target()
+        if target then
+            local target_file = target:targetfile()
+            if target_file then
+                binary_dir = path.directory(target_file)
+                print("Binary directory from target:", binary_dir)
+            end
+        end
+    end
+    
+    -- 方法3: 使用默认build目录
+    if not binary_dir then
+        binary_dir = "build"
+        print("Using default binary directory:", binary_dir)
+    end
+    
     local app_name = package:get("title") or package:name()
     local appbundle_name = app_name .. ".app"
     
-    -- 可能的.app位置
+    print("Looking for .app bundle:", appbundle_name)
+    print("In binary directory:", binary_dir)
+    
+    -- 可能的.app位置 - 重点关注二进制文件所在目录
     local possible_locations = {
-        path.join(output_dir, appbundle_name),  -- 与二进制文件在同一目录
-        path.join(output_dir, "..", appbundle_name),  -- 上级目录
+        path.join(binary_dir, appbundle_name),  -- 与二进制文件在同一目录
+        path.join(binary_dir, "..", appbundle_name),  -- 上级目录
+        path.join(binary_dir, "bin", appbundle_name),  -- bin子目录
+        path.join(binary_dir, "Debug", appbundle_name),  -- Debug目录
+        path.join(binary_dir, "Release", appbundle_name),  -- Release目录
         path.join("build", appbundle_name),  -- build目录
         path.join(".", appbundle_name),  -- 当前目录
     }
     
+    print("Checking possible locations:")
     for _, location in ipairs(possible_locations) do
         local abs_location = path.absolute(location)
+        print("  Checking:", abs_location)
+        
         if os.isdir(abs_location) then
             -- 验证这确实是一个.app bundle
             local info_plist = path.join(abs_location, "Contents", "Info.plist")
             local macos_dir = path.join(abs_location, "Contents", "MacOS")
+            
+            print("    Directory exists, checking structure...")
+            print("    Info.plist exists:", os.isfile(info_plist))
+            print("    MacOS dir exists:", os.isdir(macos_dir))
             
             if os.isfile(info_plist) and os.isdir(macos_dir) then
                 print("Found existing .app bundle:", abs_location)
@@ -92,25 +129,41 @@ function _find_app_bundle(package)
     end
     
     -- 如果没找到，尝试搜索所有.app目录
-    print("Searching for .app bundles in output directory...")
-    local search_dirs = {output_dir, "build", "."}
+    print("Specific locations failed, searching for any .app bundles...")
+    local search_dirs = {binary_dir}
+    
+    -- 添加更多搜索目录
+    if binary_dir ~= "build" then
+        table.insert(search_dirs, "build")
+    end
+    table.insert(search_dirs, ".")
     
     for _, search_dir in ipairs(search_dirs) do
+        print("Searching in directory:", search_dir)
         if os.isdir(search_dir) then
             local app_dirs = os.dirs(path.join(search_dir, "*.app"))
+            print("Found .app directories:", #app_dirs)
+            
             for _, app_dir in ipairs(app_dirs) do
                 local abs_app_dir = path.absolute(app_dir)
+                print("  Checking .app:", abs_app_dir)
+                
                 local info_plist = path.join(abs_app_dir, "Contents", "Info.plist")
                 local macos_dir = path.join(abs_app_dir, "Contents", "MacOS")
                 
                 if os.isfile(info_plist) and os.isdir(macos_dir) then
-                    print("Found .app bundle:", abs_app_dir)
+                    print("Found valid .app bundle:", abs_app_dir)
                     return abs_app_dir
+                else
+                    print("    Invalid .app structure")
                 end
             end
+        else
+            print("  Directory does not exist:", search_dir)
         end
     end
     
+    print("No .app bundle found!")
     return nil
 end
 
