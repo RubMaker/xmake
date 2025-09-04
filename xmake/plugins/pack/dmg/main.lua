@@ -680,17 +680,111 @@ function _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg
     end
 end
 
--- 主打包函数（修复版）
-function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
+-- find existing .app bundle in the build directory
+function _find_app_bundle(package)
+    -- 获取当前的构建信息
+    local plat = os.host()  -- 获取当前平台 (macosx, linux, windows等)
+    local arch = os.arch()  -- 获取当前架构 (arm64, x86_64等)
+    local mode = is_mode("debug") and "debug" or "release"  -- 获取构建模式
+    
+    print("Current build configuration:")
+    print("  Platform:", plat)
+    print("  Architecture:", arch) 
+    print("  Mode:", mode)
+    
     local app_name = package:get("title") or package:name()
     local appbundle_name = app_name .. ".app"
+    
+    print("Looking for .app bundle:", appbundle_name)
+    
+    -- 构建平台特定的路径模式
+    local platform_paths = {
+        -- 标准的xmake平台目录结构
+        path.join("build", plat, arch, mode),
+        path.join("build", plat, arch, "release"),
+        path.join("build", plat, arch, "debug"),
+        path.join("build", plat, "release"),
+        path.join("build", plat, "debug"),
+        path.join("build", plat, arch),
+        path.join("build", plat),
+        
+        -- 一些变体
+        path.join("build", mode),
+        path.join("build", "release"),
+        path.join("build", "debug"),
+        
+        -- xpack输出目录
+        path.join("build", "xpack"),
+        
+        -- 根build目录
+        "build",
+        
+        -- 当前目录
+        "."
+    }
+    
+    -- 可能的.app位置
+    local possible_locations = {}
+    
+    -- 为每个平台路径生成可能的.app位置
+    for _, base_path in ipairs(platform_paths) do
+        table.insert(possible_locations, path.join(base_path, appbundle_name))
+        -- 也检查bin子目录
+        table.insert(possible_locations, path.join(base_path, "bin", appbundle_name))
+    end
+    
+    print("Checking possible locations:")
+    for i, location in ipairs(possible_locations) do
+        local abs_location = path.absolute(location)
+        print(string.format("  [%d] Checking: %s", i, abs_location))
+        
+        if os.isdir(abs_location) then
+            -- 验证这确实是一个.app bundle
+            local info_plist = path.join(abs_location, "Contents", "Info.plist")
+            local macos_dir = path.join(abs_location, "Contents", "MacOS")
+            
+            print("      Directory exists!")
+            print("      Info.plist exists:", os.isfile(info_plist))
+            print("      MacOS dir exists:", os.isdir(macos_dir))
+            
+            if os.isfile(info_plist) and os.isdir(macos_dir) then
+                print("✓ Found valid .app bundle:", abs_location)
+                return abs_location
+            else
+                print("      Invalid .app structure")
+            end
+        end
+    end
+    
+    print("1. Is your .app file actually built?")
+    print("2. Run 'find . -name \"*.app\" -type d' to list all .app directories")
+    print("3. Check if the .app has the correct internal structure (Contents/Info.plist, Contents/MacOS/)")
+    
+    return nil
+end
+
+-- 主打包函数（修复版）
+function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
+    local existing_app = _find_app_bundle(package)
+    if not existing_app then
+        print("Error: Could not find existing .app bundle!")
+        print("Please ensure your .app bundle is built and located in the output directory.")
+        return false
+    end
+
+    local appbundle_name = path.filename(existing_app)
+    print("Using existing .app bundle:", existing_app)
+    print("App bundle name:", appbundle_name)
+
 
     -- 创建临时工作目录
     local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
     local appbundle_dir = path.join(dmg_staging_dir, appbundle_name)
 
-    -- os.tryrm(dmg_staging_dir)
-    -- os.mkdir(dmg_staging_dir)
+    print("dmg_staging_dir:", dmg_staging_dir)
+    os.tryrm(dmg_staging_dir)
+    os.mkdir(dmg_staging_dir)
+    print("Created staging directory:", dmg_staging_dir)
 
     -- -- 创建App bundle目录结构
     -- os.mkdir(appbundle_dir)
