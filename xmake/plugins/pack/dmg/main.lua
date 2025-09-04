@@ -174,7 +174,7 @@ function _create_staging_dir(package, app_source, appbundle_name, bg_image)
     -- clean and create staging directory
     if os.isdir(staging_dir) then
         print("Staging directory already exists, removing...")
-        os.tryrm(staging_dir)
+        os.vrunv("rm", {"-rf", staging_dir})
     end
     print("Removed existing staging directory if any")
     os.mkdir(staging_dir)
