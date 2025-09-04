@@ -170,11 +170,12 @@ end
 -- create dmg staging directory
 function _create_staging_dir(package, app_source, appbundle_name, bg_image)
     local staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
-    
+    print("1.Creating staging directory at:", staging_dir)
     -- clean and create staging directory
     os.tryrm(staging_dir)
+    print("Removed existing staging directory if any")
     os.mkdir(staging_dir)
-    print("Created staging directory:", staging_dir)
+    print("2.Created staging directory:", staging_dir)
     
     -- copy .app bundle to staging
     local app_dest = path.join(staging_dir, appbundle_name)
@@ -312,7 +313,7 @@ function _verify_dmg(dmg_file)
 end
 
 -- main packing function
-function _pack_dmg_simplified(package)
+function _pack_dmg(package)
     
     -- find required tools
     local create_dmg = _get_create_dmg()
@@ -369,7 +370,7 @@ function main(package)
     
     cprint("packing %s", dmg_file)
     
-    local success = _pack_dmg_simplified(package)
+    local success = _pack_dmg(package)
     
     if success then
         print("=== DMG Packaging Completed Successfully! ===")
