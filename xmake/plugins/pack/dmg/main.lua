@@ -149,7 +149,12 @@ function _create_dmg_layout(package, dmg_staging_dir)
     -- 创建应用程序链接
     local applications_link = path.join(dmg_staging_dir, "Applications")
     if not os.islink(applications_link) then
-        os.runv("ln", {"-s", "/Applications", applications_link})
+        local ln_ok, ln_errors = os.iorunv("ln", {"-s", "/Applications", applications_link})
+        if not ln_ok then
+            print("Warning: Failed to create Applications symlink:", ln_errors)
+        else
+            print("Created Applications symlink")
+        end
     end
 end
 
@@ -160,6 +165,106 @@ function _get_dmg_config(package)
         format = "UDZO" -- compressed read-only format
     }
     return config
+end
+
+-- improved copy function with better error handling
+function _copy_app_bundle(source, dest)
+    print("Attempting to copy .app bundle...")
+    print("Source:", source)
+    print("Destination:", dest)
+    
+    -- 检查源文件是否存在且可读
+    if not os.isdir(source) then
+        print("Error: Source .app bundle does not exist or is not a directory")
+        return false
+    end
+    
+    -- 检查源文件权限
+    local source_perms = os.iorunv("ls", {"-ld", source})
+    if source_perms then
+        print("Source permissions:", source_perms)
+    end
+    
+    -- 确保目标目录存在
+    local dest_dir = path.directory(dest)
+    if not os.isdir(dest_dir) then
+        print("Creating destination directory:", dest_dir)
+        if not os.mkdir(dest_dir) then
+            print("Error: Failed to create destination directory")
+            return false
+        end
+    end
+    
+    -- 检查目标目录权限
+    local dest_perms = os.iorunv("ls", {"-ld", dest_dir})
+    if dest_perms then
+        print("Destination directory permissions:", dest_perms)
+    end
+    
+    -- 删除已存在的目标文件
+    if os.exists(dest) then
+        print("Removing existing destination:", dest)
+        os.tryrm(dest)
+    end
+    
+    -- 尝试多种复制方法
+    local copy_methods = {
+        -- 方法1: cp -R (递归复制)
+        function()
+            print("Trying method 1: cp -R")
+            return os.runv("cp", {"-R", source, dest})
+        end,
+        
+        -- 方法2: cp -a (保持所有属性)
+        function()
+            print("Trying method 2: cp -a")
+            return os.runv("cp", {"-a", source, dest})
+        end,
+        
+        -- 方法3: ditto (macOS专用，更好地处理资源分支和扩展属性)
+        function()
+            print("Trying method 3: ditto")
+            return os.runv("ditto", {source, dest})
+        end,
+        
+        -- 方法4: rsync (如果可用)
+        function()
+            print("Trying method 4: rsync")
+            local rsync = find_tool("rsync")
+            if rsync then
+                return os.runv(rsync.program, {"-a", source, dest})
+            end
+            return false
+        end
+    }
+    
+    for i, method in ipairs(copy_methods) do
+        print(string.format("=== Copy attempt %d ===", i))
+        local success = method()
+        
+        if success then
+            -- 验证复制是否成功
+            if os.isdir(dest) then
+                local dest_info_plist = path.join(dest, "Contents", "Info.plist")
+                local dest_macos_dir = path.join(dest, "Contents", "MacOS")
+                
+                if os.isfile(dest_info_plist) and os.isdir(dest_macos_dir) then
+                    print("✓ Copy successful and verified")
+                    return true
+                else
+                    print("Copy completed but destination has invalid .app structure")
+                    os.tryrm(dest)
+                end
+            else
+                print("Copy appeared to succeed but destination does not exist")
+            end
+        else
+            print("Copy method failed")
+        end
+    end
+    
+    print("All copy methods failed")
+    return false
 end
 
 -- create basic DMG using hdiutil
@@ -232,19 +337,45 @@ function _create_basic_dmg(hdiutil, package, dmg_staging_dir, dmg_file, config, 
     
     -- 复制内容到挂载的DMG
     print("Copying contents to DMG...")
-    local copy_ok = os.runv("cp", {"-R", path.join(dmg_staging_dir, "*"), mount_point})
     
-    if not copy_ok then
-        -- 如果通配符复制失败，尝试逐个复制
-        local items = os.dirs(path.join(dmg_staging_dir, "*"))
-        table.join2(items, os.files(path.join(dmg_staging_dir, "*")))
-        
-        for _, item in ipairs(items) do
-            local item_name = path.filename(item)
-            local dest = path.join(mount_point, item_name)
-            print("Copying:", item, "->", dest)
-            os.runv("cp", {"-R", item, dest})
+    -- 获取staging目录中的所有项目
+    local staging_items = {}
+    local dirs = os.dirs(path.join(dmg_staging_dir, "*")) or {}
+    local files = os.files(path.join(dmg_staging_dir, "*")) or {}
+    
+    for _, item in ipairs(dirs) do
+        table.insert(staging_items, item)
+    end
+    for _, item in ipairs(files) do
+        table.insert(staging_items, item)
+    end
+    
+    if #staging_items == 0 then
+        print("Warning: No items found in staging directory")
+        -- 尝试直接列出目录内容
+        local ls_output = os.iorunv("ls", {"-la", dmg_staging_dir})
+        if ls_output then
+            print("Staging directory contents:")
+            print(ls_output)
         end
+    end
+    
+    -- 逐个复制项目
+    local copy_success = true
+    for _, item in ipairs(staging_items) do
+        local item_name = path.filename(item)
+        local dest = path.join(mount_point, item_name)
+        print("Copying:", item, "->", dest)
+        
+        local item_copy_ok = os.runv("cp", {"-R", item, dest})
+        if not item_copy_ok then
+            print("Failed to copy:", item)
+            copy_success = false
+        end
+    end
+    
+    if not copy_success then
+        print("Warning: Some items failed to copy to DMG")
     end
     
     -- 同步文件系统
@@ -327,7 +458,7 @@ function _verify_dmg(hdiutil, dmg_file)
     end
 end
 
--- main packaging function (simplified version)
+-- main packaging function with improved error handling
 function _pack_dmg_main(hdiutil, create_dmg, package)
     -- 查找现有的.app bundle
     local existing_app = _find_app_bundle(package)
@@ -342,27 +473,36 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     print("App bundle name:", appbundle_name)
     
     -- 创建临时工作目录
-    local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
+    local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging_" .. os.date("%Y%m%d_%H%M%S"))
     os.tryrm(dmg_staging_dir)
-    os.mkdir(dmg_staging_dir)
     
-    print("Created DMG staging directory:", dmg_staging_dir)
+    print("Creating DMG staging directory:", dmg_staging_dir)
+    if not os.mkdir(dmg_staging_dir) then
+        print("Error: Failed to create staging directory")
+        return false
+    end
     
-    -- 复制.app bundle到staging目录
+    -- 使用改进的复制函数复制.app bundle到staging目录
     print("Copying .app bundle to staging directory...")
     local staging_app = path.join(dmg_staging_dir, appbundle_name)
-    local copy_ok = os.runv("cp", {"-R", existing_app, staging_app})
     
-    if not copy_ok then
+    if not _copy_app_bundle(existing_app, staging_app) then
         print("Error: Failed to copy .app bundle to staging directory")
         os.tryrm(dmg_staging_dir)
         return false
     end
     
-    print("App bundle copied to:", staging_app)
+    print("App bundle copied successfully to:", staging_app)
     
     -- 创建DMG布局（Applications链接）
     _create_dmg_layout(package, dmg_staging_dir)
+    
+    -- 验证staging目录内容
+    print("Verifying staging directory contents:")
+    local ls_output = os.iorunv("ls", {"-la", dmg_staging_dir})
+    if ls_output then
+        print(ls_output)
+    end
     
     -- 获取正确的DMG文件路径
     local dmg_file = package:outputfile() or _get_dmg_file(package)
