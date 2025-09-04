@@ -350,7 +350,7 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
         print("Error: Failed to create temporary staging directory.")
         print("mkdir_tmp_dir_ok:", tmpok)
         -- 如果创建失败，立即返回 false，停止后续操作
-        -- return false
+        return false
     end
 
     print("mkdir_tmp_dir:", dmg_staging_dir)
