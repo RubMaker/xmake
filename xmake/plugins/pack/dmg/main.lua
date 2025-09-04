@@ -106,7 +106,7 @@ function _find_app_bundle(package)
             
             if os.isfile(info_plist) and os.isdir(macos_dir) then
                 print("✓ Found valid .app bundle:", abs_location)
-                return abs_location
+                return abs_location, appbundle_name
             else
                 print("      Invalid .app structure")
             end
@@ -117,7 +117,7 @@ function _find_app_bundle(package)
     print("2. Run 'find . -name \"*.app\" -type d' to list all .app directories")
     print("3. Check if the .app has the correct internal structure (Contents/Info.plist, Contents/MacOS/)")
     
-    return nil
+    return nil, nil
 end
 
 
