@@ -343,7 +343,7 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     
     -- 创建临时工作目录
     local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
-    os.runv(rm, {"-rf", dmg_staging_dir})
+    os.runv("rm", {"-rf", dmg_staging_dir})
     -- 创建新的临时目录
     local tmpok = os.runv("mkdir", {"-p", dmg_staging_dir})
     if not tmpok then
