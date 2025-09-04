@@ -344,11 +344,7 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     -- 创建临时工作目录
     local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
     os.runv("rm", {"-rf", dmg_staging_dir})
-    local mkdir_tmp_dir_ok = os.runv("mkdir", {"-p", dmg_staging_dir})
-    if not mkdir_tmp_dir_ok then
-        print("Error: Failed to create DMG staging directory")
-        return false
-    end
+    os.runv("mkdir", {"-p", dmg_staging_dir})
 
     print("Created DMG staging directory:", dmg_staging_dir)
     
@@ -356,7 +352,7 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     print("Copying .app bundle to staging directory...")
     local staging_app = path.join(dmg_staging_dir, appbundle_name)
     local copy_ok = os.runv("cp", {"-R", existing_app, staging_app})
-    
+
     if not copy_ok then
         print("Error: Failed to copy .app bundle to staging directory")
         os.tryrm(dmg_staging_dir)
