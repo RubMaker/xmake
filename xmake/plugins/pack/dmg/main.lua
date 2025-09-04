@@ -65,6 +65,7 @@ end
 function _find_app_bundle(package)
     -- 首先尝试在输出目录中查找
     local output_dir = path.directory(package:outputfile() or "build")
+    print("output_dir:", output_dir)
     local app_name = package:get("title") or package:name()
     local appbundle_name = app_name .. ".app"
     
