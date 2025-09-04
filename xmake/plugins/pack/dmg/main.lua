@@ -343,21 +343,33 @@ function _pack_dmg_main(hdiutil, create_dmg, package)
     
     -- 创建临时工作目录
     local dmg_staging_dir = path.join(os.curdir(), "build", package:name() .. "_dmg_staging")
-    print("mkdir_tmp_dir:", dmg_staging_dir)
+    print("Current user:", os.getenv("USER"))
+    print("Current directory:", os.curdir())
+    print("Target directory:", dmg_staging_dir)
+    print("Parent directory exists:", os.isdir(path.directory(dmg_staging_dir)))
     os.tryrm(dmg_staging_dir)
     -- 创建新的临时目录
-    local tmpok = os.mkdir(dmg_staging_dir)
-    if not tmpok then
-        print("Error: Failed to create directory with system mkdir")
-        print("Command: mkdir -p", dmg_staging_dir)
-        print("Error output:", errors or "No error details")
-        print("Current directory:", os.curdir())
-        print("Directory permissions:")
-        os.runv("ls", {"-la", path.directory(dmg_staging_dir)})
-        -- return false
+    -- 先确保父目录存在
+    local parent = path.directory(dmg_staging_dir)
+    if not os.isdir(parent) then
+        local parent_ok = os.mkdir(parent)
+        print("Parent directory creation result:", parent_ok)
     end
 
-    
+    local tmpok = os.mkdir(dmg_staging_dir)
+    print("Directory creation result:", tmpok)
+    print("Directory exists after creation:", os.isdir(dmg_staging_dir))
+
+    if not tmpok then
+        -- 尝试使用系统命令
+        print("Trying system mkdir command...")
+        local cmd_ok = os.runv("mkdir", {"-p", dmg_staging_dir})
+        if cmd_ok and os.isdir(dmg_staging_dir) then
+            print("System mkdir succeeded")
+            tmpok = true
+        end
+    end
+
 
     -- 复制.app bundle到staging目录
     print("Copying .app bundle to staging directory...")
