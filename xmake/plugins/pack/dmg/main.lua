@@ -832,7 +832,10 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     --         end
     --     end
     -- end
-    os.vcp(existing_app, dmg_staging_dir)
+    print("1111")
+    os.runv("cp", {"-R", existing_app, dmg_staging_dir})
+    print("2222")
+    -- os.vcp(existing_app, dmg_staging_dir)
     -- 创建必要的App bundle文件
     -- _create_info_plist(package, appbundle_dir)
     -- _copy_icon(package, appbundle_dir)
