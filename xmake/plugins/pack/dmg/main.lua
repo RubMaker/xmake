@@ -689,82 +689,82 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
     local appbundle_dir = path.join(dmg_staging_dir, appbundle_name)
 
-    os.tryrm(dmg_staging_dir)
-    os.mkdir(dmg_staging_dir)
+    -- os.tryrm(dmg_staging_dir)
+    -- os.mkdir(dmg_staging_dir)
 
-    -- 创建App bundle目录结构
-    os.mkdir(appbundle_dir)
-    os.mkdir(path.join(appbundle_dir, "Contents"))
-    os.mkdir(path.join(appbundle_dir, "Contents", "MacOS"))
-    os.mkdir(path.join(appbundle_dir, "Contents", "Resources"))
-    os.mkdir(path.join(appbundle_dir, "Contents", "Frameworks"))
+    -- -- 创建App bundle目录结构
+    -- os.mkdir(appbundle_dir)
+    -- os.mkdir(path.join(appbundle_dir, "Contents"))
+    -- os.mkdir(path.join(appbundle_dir, "Contents", "MacOS"))
+    -- os.mkdir(path.join(appbundle_dir, "Contents", "Resources"))
+    -- os.mkdir(path.join(appbundle_dir, "Contents", "Frameworks"))
 
-    print("Created app bundle structure at:", appbundle_dir)
+    -- print("Created app bundle structure at:", appbundle_dir)
 
-    -- 安装文件到App bundle
-    local installcmds = {}
-    _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(package):cmds())
-    for _, component in table.orderpairs(package:components()) do
-        if component:get("default") ~= false then
-            _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(component):cmds())
-        end
-    end
+    -- -- 安装文件到App bundle
+    -- local installcmds = {}
+    -- _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(package):cmds())
+    -- for _, component in table.orderpairs(package:components()) do
+    --     if component:get("default") ~= false then
+    --         _get_installcmds(package, appbundle_dir, installcmds, batchcmds.get_installcmds(component):cmds())
+    --     end
+    -- end
 
-    -- 执行安装命令
-    print("Executing installation commands...")
-    for _, cmd in ipairs(installcmds) do
-        print("Executing: " .. cmd)
-        local ok = os.exec(cmd)
-        if not ok then
-            print("Warning: Command failed:", cmd)
-        end
-    end
+    -- -- 执行安装命令
+    -- print("Executing installation commands...")
+    -- for _, cmd in ipairs(installcmds) do
+    --     print("Executing: " .. cmd)
+    --     local ok = os.exec(cmd)
+    --     if not ok then
+    --         print("Warning: Command failed:", cmd)
+    --     end
+    -- end
 
-    -- 复制源文件
-    print("Copying source files...")
-    local srcfiles, dstfiles = package:sourcefiles()
-    for idx, srcfile in ipairs(srcfiles) do
-        local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
-        if dstfile then
-            print("Copying:", srcfile, "->", dstfile)
-            os.vcp(srcfile, dstfile)
-        end
-    end
+    -- -- 复制源文件
+    -- print("Copying source files...")
+    -- local srcfiles, dstfiles = package:sourcefiles()
+    -- for idx, srcfile in ipairs(srcfiles) do
+    --     local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
+    --     if dstfile then
+    --         print("Copying:", srcfile, "->", dstfile)
+    --         os.vcp(srcfile, dstfile)
+    --     end
+    -- end
 
-    -- 复制组件源文件
-    for _, component in table.orderpairs(package:components()) do
-        if component:get("default") ~= false then
-            local srcfiles, dstfiles = component:sourcefiles()
-            for idx, srcfile in ipairs(srcfiles) do
-                local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
-                if dstfile then
-                    print("Copying component file:", srcfile, "->", dstfile)
-                    os.vcp(srcfile, dstfile)
-                end
-            end
-        end
-    end
+    -- -- 复制组件源文件
+    -- for _, component in table.orderpairs(package:components()) do
+    --     if component:get("default") ~= false then
+    --         local srcfiles, dstfiles = component:sourcefiles()
+    --         for idx, srcfile in ipairs(srcfiles) do
+    --             local dstfile = _translate_filepath(package, dstfiles[idx], appbundle_dir)
+    --             if dstfile then
+    --                 print("Copying component file:", srcfile, "->", dstfile)
+    --                 os.vcp(srcfile, dstfile)
+    --             end
+    --         end
+    --     end
+    -- end
 
-    -- 创建必要的App bundle文件
-    _create_info_plist(package, appbundle_dir)
-    _copy_icon(package, appbundle_dir)
+    -- -- 创建必要的App bundle文件
+    -- _create_info_plist(package, appbundle_dir)
+    -- _copy_icon(package, appbundle_dir)
 
-    -- 确保主可执行文件有执行权限
-    local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
-    if os.isfile(main_executable) then
-        os.runv("chmod", {"+x", main_executable})
-        print("Main executable:", main_executable)
-    else
-        print("Warning: Main executable not found at expected location")
-    end
+    -- -- 确保主可执行文件有执行权限
+    -- local main_executable = path.join(appbundle_dir, "Contents", "MacOS", package:name())
+    -- if os.isfile(main_executable) then
+    --     os.runv("chmod", {"+x", main_executable})
+    --     print("Main executable:", main_executable)
+    -- else
+    --     print("Warning: Main executable not found at expected location")
+    -- end
 
-    -- 收集依赖库
-    _collect_deps_manually(package, appbundle_dir)
+    -- -- 收集依赖库
+    -- _collect_deps_manually(package, appbundle_dir)
 
-    -- 代码签名（如果配置了）
-    if codesign then
-        _sign_app_bundle(package, appbundle_dir, codesign)
-    end
+    -- -- 代码签名（如果配置了）
+    -- if codesign then
+    --     _sign_app_bundle(package, appbundle_dir, codesign)
+    -- end
 
     -- 创建DMG布局文件
     _create_dmg_layout(package, dmg_staging_dir)
@@ -782,15 +782,14 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     end
 
     os.tryrm(dmg_file)
-
+    
     print("Creating final DMG file:", dmg_file)
     local success = _create_enhanced_dmg(hdiutil, create_dmg, package, dmg_staging_dir, dmg_file)
-
+    
     if success then
-        
         -- 验证DMG
         _verify_dmg(hdiutil, dmg_file)
-
+        
         -- 显示DMG信息
         local dmg_info = os.iorunv(hdiutil.program, {"imageinfo", dmg_file})
         if dmg_info then
@@ -805,10 +804,10 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     else
         print("Error: Failed to create DMG")
     end
-
+    
     -- 清理临时目录
     os.tryrm(dmg_staging_dir)
-
+    
     return success
 end
 
