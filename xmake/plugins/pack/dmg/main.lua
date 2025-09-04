@@ -50,6 +50,9 @@ end
 -- get the codesign tool
 function _get_codesign()
     local codesign = find_tool("codesign")
+    if not codesign then
+        print("Warning: codesign not found. Code signing will be skipped.")
+    end
     return codesign
 end
 
@@ -822,7 +825,7 @@ function _verify_dmg(hdiutil, dmg_file)
     end
 end
 
--- main function (完全修复版)
+-- main function 
 function main(package)
     -- only for macOS
     if not is_host("macosx") then
