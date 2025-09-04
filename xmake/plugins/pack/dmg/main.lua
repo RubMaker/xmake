@@ -63,107 +63,130 @@ end
 
 -- find existing .app bundle in the build directory
 function _find_app_bundle(package)
-    -- 获取二进制文件的目录
-    local binary_dir = nil
+    -- 获取当前的构建信息
+    local plat = os.host()  -- 获取当前平台 (macosx, linux, windows等)
+    local arch = os.arch()  -- 获取当前架构 (arm64, x86_64等)
+    local mode = is_mode("debug") and "debug" or "release"  -- 获取构建模式
     
-    -- 方法1: 从package的outputfile获取目录
-    if package:outputfile() then
-        binary_dir = path.directory(package:outputfile())
-        print("Binary directory from outputfile:", binary_dir)
-    end
-    
-    -- 方法2: 尝试从target获取输出目录
-    if not binary_dir then
-        local target = package:target()
-        if target then
-            local target_file = target:targetfile()
-            if target_file then
-                binary_dir = path.directory(target_file)
-                print("Binary directory from target:", binary_dir)
-            end
-        end
-    end
-    
-    -- 方法3: 使用默认build目录
-    if not binary_dir then
-        binary_dir = "build"
-        print("Using default binary directory:", binary_dir)
-    end
+    print("Current build configuration:")
+    print("  Platform:", plat)
+    print("  Architecture:", arch) 
+    print("  Mode:", mode)
     
     local app_name = package:get("title") or package:name()
     local appbundle_name = app_name .. ".app"
     
     print("Looking for .app bundle:", appbundle_name)
-    print("In binary directory:", binary_dir)
     
-    -- 可能的.app位置 - 重点关注二进制文件所在目录
-    local possible_locations = {
-        path.join(binary_dir, appbundle_name),  -- 与二进制文件在同一目录
-        path.join(binary_dir, "..", appbundle_name),  -- 上级目录
-        path.join(binary_dir, "bin", appbundle_name),  -- bin子目录
-        path.join(binary_dir, "Debug", appbundle_name),  -- Debug目录
-        path.join(binary_dir, "Release", appbundle_name),  -- Release目录
-        path.join("build", appbundle_name),  -- build目录
-        path.join(".", appbundle_name),  -- 当前目录
+    -- 构建平台特定的路径模式
+    local platform_paths = {
+        -- 标准的xmake平台目录结构
+        path.join("build", plat, arch, mode),
+        path.join("build", plat, arch, "release"),
+        path.join("build", plat, arch, "debug"),
+        path.join("build", plat, "release"),
+        path.join("build", plat, "debug"),
+        path.join("build", plat, arch),
+        path.join("build", plat),
+        
+        -- 一些变体
+        path.join("build", mode),
+        path.join("build", "release"),
+        path.join("build", "debug"),
+        
+        -- xpack输出目录
+        path.join("build", "xpack"),
+        
+        -- 根build目录
+        "build",
+        
+        -- 当前目录
+        "."
     }
     
+    -- 可能的.app位置
+    local possible_locations = {}
+    
+    -- 为每个平台路径生成可能的.app位置
+    for _, base_path in ipairs(platform_paths) do
+        table.insert(possible_locations, path.join(base_path, appbundle_name))
+        -- 也检查bin子目录
+        table.insert(possible_locations, path.join(base_path, "bin", appbundle_name))
+    end
+    
     print("Checking possible locations:")
-    for _, location in ipairs(possible_locations) do
+    for i, location in ipairs(possible_locations) do
         local abs_location = path.absolute(location)
-        print("  Checking:", abs_location)
+        print(string.format("  [%d] Checking: %s", i, abs_location))
         
         if os.isdir(abs_location) then
             -- 验证这确实是一个.app bundle
             local info_plist = path.join(abs_location, "Contents", "Info.plist")
             local macos_dir = path.join(abs_location, "Contents", "MacOS")
             
-            print("    Directory exists, checking structure...")
-            print("    Info.plist exists:", os.isfile(info_plist))
-            print("    MacOS dir exists:", os.isdir(macos_dir))
+            print("      Directory exists!")
+            print("      Info.plist exists:", os.isfile(info_plist))
+            print("      MacOS dir exists:", os.isdir(macos_dir))
             
             if os.isfile(info_plist) and os.isdir(macos_dir) then
-                print("Found existing .app bundle:", abs_location)
+                print("✓ Found valid .app bundle:", abs_location)
                 return abs_location
+            else
+                print("      Invalid .app structure")
             end
         end
     end
     
-    -- 如果没找到，尝试搜索所有.app目录
-    print("Specific locations failed, searching for any .app bundles...")
-    local search_dirs = {binary_dir}
+    -- 如果还没找到，进行更广泛的搜索
+    print("\nSpecific locations failed, performing broader search...")
+    local search_roots = {"build", "."}
     
-    -- 添加更多搜索目录
-    if binary_dir ~= "build" then
-        table.insert(search_dirs, "build")
-    end
-    table.insert(search_dirs, ".")
-    
-    for _, search_dir in ipairs(search_dirs) do
-        print("Searching in directory:", search_dir)
-        if os.isdir(search_dir) then
-            local app_dirs = os.dirs(path.join(search_dir, "*.app"))
-            print("Found .app directories:", #app_dirs)
-            
-            for _, app_dir in ipairs(app_dirs) do
-                local abs_app_dir = path.absolute(app_dir)
-                print("  Checking .app:", abs_app_dir)
+    for _, root in ipairs(search_roots) do
+        print("Recursively searching in:", root)
+        if os.isdir(root) then
+            -- 递归搜索.app目录
+            local function search_recursive(dir, max_depth)
+                if max_depth <= 0 then return nil end
                 
-                local info_plist = path.join(abs_app_dir, "Contents", "Info.plist")
-                local macos_dir = path.join(abs_app_dir, "Contents", "MacOS")
-                
-                if os.isfile(info_plist) and os.isdir(macos_dir) then
-                    print("Found valid .app bundle:", abs_app_dir)
-                    return abs_app_dir
-                else
-                    print("    Invalid .app structure")
+                -- 检查当前目录中的.app文件
+                local app_dirs = os.dirs(path.join(dir, "*.app"))
+                for _, app_dir in ipairs(app_dirs) do
+                    local abs_app_dir = path.absolute(app_dir)
+                    print("  Found .app candidate:", abs_app_dir)
+                    
+                    local info_plist = path.join(abs_app_dir, "Contents", "Info.plist")
+                    local macos_dir = path.join(abs_app_dir, "Contents", "MacOS")
+                    
+                    if os.isfile(info_plist) and os.isdir(macos_dir) then
+                        print("✓ Found valid .app bundle:", abs_app_dir)
+                        return abs_app_dir
+                    else
+                        print("    Invalid .app structure")
+                    end
                 end
+                
+                -- 递归搜索子目录
+                local subdirs = os.dirs(path.join(dir, "*"))
+                for _, subdir in ipairs(subdirs) do
+                    if not subdir:match("%.app$") then  -- 跳过.app目录本身
+                        local result = search_recursive(subdir, max_depth - 1)
+                        if result then return result end
+                    end
+                end
+                
+                return nil
             end
+            
+            local result = search_recursive(root, 3)  -- 最多搜索3层深度
+            if result then return result end
         else
-            print("  Directory does not exist:", search_dir)
+            print("  Directory does not exist:", root)
         end
     end
+    print("1. Is your .app file actually built?")
+    print("2. Run 'find . -name \"*.app\" -type d' to list all .app directories")
+    print("3. Check if the .app has the correct internal structure (Contents/Info.plist, Contents/MacOS/)")
     
-    print("No .app bundle found!")
     return nil
 end
 
