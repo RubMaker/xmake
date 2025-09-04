@@ -776,9 +776,15 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     -- 创建临时工作目录
     local dmg_staging_dir = path.join(os.tmpdir(), package:name() .. "_dmg_staging")
     -- local appbundle_dir = path.join(dmg_staging_dir, appbundle_name)
-
+    print("Creating DMG staging directory:", dmg_staging_dir)
     os.tryrm(dmg_staging_dir)
+    print("Creating directory...")
     os.mkdir(dmg_staging_dir)
+    print("Directory created.")
+
+    print("Copying existing .app bundle to DMG staging directory...")
+    os.runv("cp", {"-R", existing_app, dmg_staging_dir})
+    print("Copying complete.")
 
     -- 创建App bundle目录结构
     -- os.mkdir(appbundle_dir)
@@ -832,9 +838,6 @@ function _pack_dmg_main(hdiutil, create_dmg, codesign, package)
     --         end
     --     end
     -- end
-    print("1111")
-    os.runv("cp", {"-R", existing_app, dmg_staging_dir})
-    print("2222")
     -- os.vcp(existing_app, dmg_staging_dir)
     -- 创建必要的App bundle文件
     -- _create_info_plist(package, appbundle_dir)
