@@ -73,12 +73,16 @@ local apis = {
         "xpack.set_iconname",
         -- set appimage tool
         "xpack.set_appimage_tool",
-        -- set dmg size
-        "xpack.set_dmg_size",
-        -- set dmg volicon
-        "xpack.set_dmg_volicon",
-        -- set dmg background
-        "xpack.set_dmg_background",
+        -- set dmg window position
+        "xpack.set_dmg_window_pos",
+        -- set dmg window size
+        "xpack.set_dmg_window_size",
+        -- set dmg icon size
+        "xpack.set_dmg_icon_size",
+        -- set dmg applications position
+        "xpack.set_dmg_applications_pos",
+        -- set dmg icon position
+        "xpack.set_dmg_icon_position",
         -- set package component title
         "xpack_component.set_title",
         -- set package component description

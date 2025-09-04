@@ -204,11 +204,11 @@ function _create_staging_dir(package, app_source, appbundle_name, bg_image)
     end
     
     -- create Applications symlink for easy installation
-    local apps_link = path.join(staging_dir, "Applications")
-    if not os.islink(apps_link) then
-        os.runv("ln", {"-s", "/Applications", apps_link})
-        print("Created Applications symlink")
-    end
+    -- local apps_link = path.join(staging_dir, "Applications")
+    -- if not os.islink(apps_link) then
+    --     os.runv("ln", {"-s", "/Applications", apps_link})
+    --     print("Created Applications symlink")
+    -- end
     
     return staging_dir
 end
@@ -218,57 +218,67 @@ function _create_dmg_with_create_dmg(create_dmg, package, staging_dir, dmg_file,
     print("Creating DMG with create-dmg...")
     
     local config = {
-        title = package:get("title") or package:name(),
-        window_size = package:get("dmg_window_size") or "600x400",
+        title = (package:get("title") or package:name() .. " Installer"),
+        window_pos = package:get("dmg_window_pos") or "400,200",
+        window_size = package:get("dmg_window_size") or "660,400", 
         icon_size = package:get("dmg_icon_size") or 100,
-        app_position = package:get("dmg_app_position") or "175,220",
-        apps_link_position = package:get("dmg_apps_position") or "425,220"
+        app_position = package:get("dmg_icon_position") or "160,185",
+        apps_link_position = package:get("dmg_applications_pos") or "500,185"
     }
     
+    -- parse window position
+    local window_pos_x, window_pos_y = config.window_pos:match("(%d+),(%d+)")
+    window_pos_x = window_pos_x or "400"
+    window_pos_y = window_pos_y or "200"
+    
     -- parse window size
-    local window_w, window_h = config.window_size:match("(%d+)x(%d+)")
-    window_w = window_w or "600"
+    local window_w, window_h = config.window_size:match("(%d+),(%d+)")
+    if not window_w then
+        window_w, window_h = config.window_size:match("(%d+)x(%d+)")
+    end
+    window_w = window_w or "660"
     window_h = window_h or "400"
     
-    -- parse positions
+    -- parse app position
     local app_x, app_y = config.app_position:match("(%d+),(%d+)")
-    app_x = app_x or "175"
-    app_y = app_y or "220"
+    app_x = app_x or "160"
+    app_y = app_y or "185"
     
+    -- parse Applications link position
     local apps_x, apps_y = config.apps_link_position:match("(%d+),(%d+)")
-    apps_x = apps_x or "425"
-    apps_y = apps_y or "220"
+    apps_x = apps_x or "500"
+    apps_y = apps_y or "185"
     
-    -- build create-dmg arguments
+    -- build create-dmg arguments following the reference format
     local args = {
         "--volname", config.title,
-        "--window-pos", "200", "120",
+        "--window-pos", window_pos_x, window_pos_y,
         "--window-size", window_w, window_h,
         "--icon-size", tostring(config.icon_size),
         "--icon", appbundle_name, app_x, app_y,
         "--hide-extension", appbundle_name,
         "--app-drop-link", apps_x, apps_y
     }
-    
-    -- add background if available
     if bg_image then
         local bg_name = path.filename(bg_image)
-        table.insert(args, "--background")
-        table.insert(args, bg_name)
+        -- insert background after volname
+        table.insert(args, 3, "--background")
+        table.insert(args, 4, bg_name)
     end
-    
-    -- add output file and source directory
+    print ("DMG configuration:", args)
+
+    -- add output file and source directory at the end
     table.insert(args, dmg_file)
     table.insert(args, staging_dir)
     
     print("create-dmg command:")
-    print("  " .. create_dmg.program .. " " .. table.concat(args, " "))
+    print("  " .. create_dmg.program .. " \\\n    " .. table.concat(args, " \\\n    "))
     
     -- ensure output directory exists
-    os.mkdir(path.directory(dmg_file))
+    os.vrunv("mkdir", {"-p", path.directory(dmg_file)})
     
     -- remove existing dmg file if exists
-    os.tryrm(dmg_file)
+    os.vrunv("rm", {"-f", dmg_file})
     
     -- run create-dmg
     local ok, errors = os.iorunv(create_dmg.program, args)
@@ -284,6 +294,7 @@ function _create_dmg_with_create_dmg(create_dmg, package, staging_dir, dmg_file,
         return false
     end
 end
+
 
 -- verify dmg file
 function _verify_dmg(dmg_file)
