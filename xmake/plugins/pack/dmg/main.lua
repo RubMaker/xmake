@@ -137,52 +137,6 @@ function _find_app_bundle(package)
         end
     end
     
-    -- 如果还没找到，进行更广泛的搜索
-    print("\nSpecific locations failed, performing broader search...")
-    local search_roots = {"build", "."}
-    
-    for _, root in ipairs(search_roots) do
-        print("Recursively searching in:", root)
-        if os.isdir(root) then
-            -- 递归搜索.app目录
-            local function search_recursive(dir, max_depth)
-                if max_depth <= 0 then return nil end
-                
-                -- 检查当前目录中的.app文件
-                local app_dirs = os.dirs(path.join(dir, "*.app"))
-                for _, app_dir in ipairs(app_dirs) do
-                    local abs_app_dir = path.absolute(app_dir)
-                    print("  Found .app candidate:", abs_app_dir)
-                    
-                    local info_plist = path.join(abs_app_dir, "Contents", "Info.plist")
-                    local macos_dir = path.join(abs_app_dir, "Contents", "MacOS")
-                    
-                    if os.isfile(info_plist) and os.isdir(macos_dir) then
-                        print("✓ Found valid .app bundle:", abs_app_dir)
-                        return abs_app_dir
-                    else
-                        print("    Invalid .app structure")
-                    end
-                end
-                
-                -- 递归搜索子目录
-                local subdirs = os.dirs(path.join(dir, "*"))
-                for _, subdir in ipairs(subdirs) do
-                    if not subdir:match("%.app$") then  -- 跳过.app目录本身
-                        local result = search_recursive(subdir, max_depth - 1)
-                        if result then return result end
-                    end
-                end
-                
-                return nil
-            end
-            
-            local result = search_recursive(root, 3)  -- 最多搜索3层深度
-            if result then return result end
-        else
-            print("  Directory does not exist:", root)
-        end
-    end
     print("1. Is your .app file actually built?")
     print("2. Run 'find . -name \"*.app\" -type d' to list all .app directories")
     print("3. Check if the .app has the correct internal structure (Contents/Info.plist, Contents/MacOS/)")
