@@ -31,16 +31,6 @@ import(".batchcmds")
 function _get_appimagetool()
     local appimagetool = find_tool("appimagetool")
     if not appimagetool then
-    --     -- try to download appimagetool if not found
-    --     local appimagetool_url = "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-    --     local appimagetool_path = path.join(os.tmpdir(), "appimagetool")
-    --     if not os.isfile(appimagetool_path) then
-    --         print("appimagetool not found, downloading...")
-    --         os.runv("wget", {"-O", appimagetool_path, appimagetool_url})
-    --         os.runv("chmod", {"+x", appimagetool_path})
-    --     end
-    --     appimagetool = {program = appimagetool_path}
-    -- end
         assert(appimagetool, "appimagetool need to be downloaded!")
     end
     return appimagetool
@@ -58,36 +48,8 @@ function _get_linuxdeploy()
             os.runv("chmod", {"+x", linuxdeploy_path})
         end
         linuxdeploy = {program = linuxdeploy_path}
-        -- assert(linuxdeploy, "linuxdeploy need to be downloaded!")
     end
     return linuxdeploy
-end
-
--- get appimage-builder tool
-function _get_appimage_builder()
-    local appimage_builder = find_tool("appimage-builder")
-    if not appimage_builder then
-        print("appimage-builder not found, please install it via pip: pip3 install appimage-builder")
-        return nil
-    end
-    return appimage_builder
-end
-
--- detect which dependency collection tool to use
-function _detect_dependency_tool(package)
-    local preferred_tool = package:get("appimage_tool") or "linuxdeploy"
-    
-    print("Preferred dependency collection tool:", preferred_tool)
-    
-    if preferred_tool == "appimage-builder" then
-        local tool = _get_appimage_builder()
-        print("appimage-builder found:", tool and tool.program or "not found")
-        return tool, "appimage-builder"
-    else -- default to linuxdeploy
-        local tool = _get_linuxdeploy()
-        print("linuxdeploy found:", tool and tool.program or "not found")
-        return tool, "linuxdeploy"
-    end
 end
 
 -- get appimage output file
@@ -297,63 +259,6 @@ function _copy_icon(package, appdir)
     end
 end
 
--- create AppImageBuilder recipe file
-function _create_appimage_builder_recipe(package, appdir)
-    local recipe_content = string.format([[
-version: 1
-
-script:
-  # Remove any get-pip.py and python cache
-  - rm -rf $APPDIR/.cache
-
-AppDir:
-  path: %s
-
-  app_info:
-    id: %s
-    name: %s
-    icon: %s
-    version: %s
-    exec: usr/bin/%s
-    exec_args: $@
-
-  apt:
-    arch: amd64
-    sources:
-      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ focal main restricted'
-        key_url: 'http://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3B4FE6ACC0B21F32'
-      - sourceline: 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ focal-updates main restricted'
-
-  files:
-    exclude:
-      - usr/lib/x86_64-linux-gnu/gconv
-      - usr/share/man
-      - usr/share/doc/*/README.*
-      - usr/share/doc/*/changelog.*
-      - usr/share/doc/*/NEWS.*
-      - usr/share/doc/*/TODO.*
-
-  runtime:
-    env:
-      PATH: '${APPDIR}/usr/bin:${PATH}'
-      LD_LIBRARY_PATH: '${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}'
-
-AppImage:
-  arch: x86_64
-]], 
-        appdir,
-        package:get("bundle_id") or package:name(),
-        package:get("title") or package:name(),
-        package:get("iconname") or package:name(),
-        package:version(),
-        package:name()
-    )
-    
-    local recipe_file = path.join(path.directory(appdir), "AppImageBuilder.yml")
-    io.writefile(recipe_file, recipe_content)
-    return recipe_file
-end
-
 -- collect dependencies using linuxdeploy
 function _collect_deps_with_linuxdeploy(package, appdir, linuxdeploy)
     print("Using linuxdeploy for dependency collection...")
@@ -400,38 +305,6 @@ function _collect_deps_with_linuxdeploy(package, appdir, linuxdeploy)
         print("linuxdeploy did not create lib directory")
     end
     
-    return true
-end
-
--- collect dependencies using appimage-builder
-function _collect_deps_with_appimage_builder(package, appdir, appimage_builder)
-    print("Using appimage-builder for dependency collection...")
-    
-    -- create recipe file
-    local recipe_file = _create_appimage_builder_recipe(package, appdir)
-    
-    -- change to the directory containing the recipe
-    local old_cwd = os.curdir()
-    os.cd(path.directory(recipe_file))
-    
-    local ok, err = pcall(function()
-        -- run appimage-builder
-        local args = {"--recipe", path.filename(recipe_file)}
-        
-        print("Running appimage-builder with args:", table.concat(args, " "))
-        local ok, err = os.iorunv(appimage_builder.program, args)
-        if not ok then
-            error("appimage-builder failed: " .. (err or "unknown error"))
-        end
-    end)
-    
-    -- restore working directory
-    os.cd(old_cwd)
-    
-    if not ok then
-        print("Warning: appimage-builder failed:", err)
-        return false
-    end
     return true
 end
 
@@ -573,34 +446,21 @@ function _pack_appimage(appimagetool, package)
     local desktop_usr_file = path.join(appdir, "usr/share/applications", package:name() .. ".desktop")
     os.cp(desktop_file, desktop_usr_file)
 
-    -- 检测并使用依赖收集工具
-    local dep_tool, tool_name = _detect_dependency_tool(package)
+    -- 使用 linuxdeploy 收集依赖
+    local linuxdeploy = _get_linuxdeploy()
     local deps_collected = false
     
-    print("Starting dependency collection with tool:", tool_name)
-    
-    if tool_name == "appimage-builder" and dep_tool then
-        print("Using appimage-builder...")
-        deps_collected = _collect_deps_with_appimage_builder(package, appdir, dep_tool)
+    if linuxdeploy then
+        print("Using linuxdeploy for dependency collection...")
+        deps_collected = _collect_deps_with_linuxdeploy(package, appdir, linuxdeploy)
         if deps_collected then
-            print("Dependencies collected successfully with appimage-builder")
-            -- appimage-builder 会直接生成 AppImage，所以这里可以返回
-            return
+            print("Dependencies collected successfully with linuxdeploy")
         end
-    else -- default to linuxdeploy
-        if dep_tool then
-            print("Using linuxdeploy...")
-            deps_collected = _collect_deps_with_linuxdeploy(package, appdir, dep_tool)
-            if deps_collected then
-                print("Dependencies collected successfully with linuxdeploy")
-                -- print(deps_collected)
-            end
-        else
-            print("No dependency collection tool found!")
-        end
+    else
+        print("linuxdeploy not available")
     end
     
-    -- 如果依赖收集失败，使用手动方式作为后备
+    -- 如果 linuxdeploy 失败，使用手动方式作为后备
     if not deps_collected then
         print("Falling back to manual dependency collection...")
         _collect_deps_manually(package, appdir)
@@ -618,18 +478,16 @@ function _pack_appimage(appimagetool, package)
         print("Warning: lib directory was not created!")
     end
 
-    -- 使用 appimagetool 构建最终的 AppImage（如果不是用 appimage-builder）
-    if tool_name ~= "appimage-builder" or not deps_collected then
-        local appimage_file = package:outputfile() or _get_appimage_file(package)
-        os.tryrm(appimage_file)
-        
-        -- 设置架构环境变量
-        local arch = package:get("arch") or "x86_64"
-        local envs = {ARCH = arch}
-        
-        print(string.format("Building AppImage: %s", appimage_file))
-        os.vrunv(appimagetool.program, {appdir, appimage_file}, {envs = envs})
-    end
+    -- 使用 appimagetool 构建最终的 AppImage
+    local appimage_file = package:outputfile() or _get_appimage_file(package)
+    os.tryrm(appimage_file)
+    
+    -- 设置架构环境变量
+    local arch = package:get("arch") or "x86_64"
+    local envs = {ARCH = arch}
+    
+    print(string.format("Building AppImage: %s", appimage_file))
+    os.vrunv(appimagetool.program, {appdir, appimage_file}, {envs = envs})
 
     -- 清理临时目录
     os.tryrm(appdir)
