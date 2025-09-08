@@ -29,7 +29,7 @@ import("private.action.build.target", {alias = "target_buildutils"})
 -- prepare targets
 function prepare_targets()
     local targets_root = target_buildutils.get_root_targets()
-    target_buildutils.run_targetjobs(targets_root, {job_kind = "prepare", for_generator = true})
+    target_buildutils.run_targetjobs(targets_root, {job_kind = "prepare", for_generator = true, jobs = os.default_njob()})
 end
 
 -- get target buildcmds
@@ -77,6 +77,16 @@ function get_target_buildcmds(target, opt)
             else
                 break
             end
+        end
+    end
+    -- translate batchcmds:lua to batchcmds:runv, we need to generate executable commmand
+    for _, cmd in ipairs(buildcmds:cmds()) do
+        local kind = cmd.kind
+        if cmd.script and (kind == "lua" or kind == "vlua") then
+            cmd.kind = (kind == "vlua") and "vrunv" or "runv"
+            cmd.program = os.programfile()
+            cmd.argv = table.join("lua", cmd.script, cmd.argv)
+            cmd.script = nil
         end
     end
     return buildcmds:cmds()
