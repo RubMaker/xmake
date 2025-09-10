@@ -25,6 +25,7 @@ import("core.base.hashset")
 import("lib.detect.find_tool")
 import("lib.detect.find_file")
 import("utils.archive")
+import("detect.sdks.find_qt")
 import(".batchcmds")
 
 -- get the appimagetool
@@ -68,57 +69,180 @@ function _get_linuxdeployqt()
     return linuxdeployqt
 end
 
+-- collect Qt dependencies with linuxdeployqt (rewritten)
 function _collect_qt_deps_with_linuxdeployqt(package, appdir, linuxdeployqt)
     print("Using linuxdeployqt for Qt dependency collection...")
 
-    -- 获取 Qt 版本
-    local qt_version = _get_qt_version() or "5.15.3"
-    print("Target Qt version:", qt_version)
+    -- 获取Qt SDK信息
+    local qt = find_qt()
+    if not qt then
+        print("Warning: Qt SDK not found, cannot determine Qt version")
+        return false
+    end
 
+    local qt_version = qt.sdkver or "5.15.3"
+    print("Target Qt version:", qt_version)
+    print("Qt SDK directory:", qt.sdkdir)
+    print("Qt binary directory:", qt.bindir)
+    print("Qt library directory:", qt.libdir)
+    print("Qt plugins directory:", qt.pluginsdir)
+
+    -- 验证必要文件
     local main_executable = path.join(appdir, "usr/bin", package:name())
     local desktop_file = path.join(appdir, package:name() .. ".desktop")
 
     if not os.isfile(main_executable) then
-        print("Warning: Main executable not found:", main_executable)
+        print("Error: Main executable not found:", main_executable)
         return false
     end
     if not os.isfile(desktop_file) then
-        print("Warning: Desktop file not found:", desktop_file)
+        print("Error: Desktop file not found:", desktop_file)
         return false
     end
 
-    -- 设置环境变量，优先使用 AppDir 内 Qt
+    print("Main executable:", main_executable)
+    print("Desktop file:", desktop_file)
+
+    -- 设置环境变量
     local envs = {}
-    local qt_root = os.getenv("QTDIR")
-    if qt_root then
-        envs.QT_PLUGIN_PATH = path.join(qt_root, "plugins")
-        envs.LD_LIBRARY_PATH = path.join(qt_root, "lib") .. ":" .. (envs.LD_LIBRARY_PATH or "")
+    
+    -- 设置Qt相关环境变量
+    if qt.bindir then
+        envs.PATH = qt.bindir .. ":" .. (os.getenv("PATH") or "")
+    end
+    if qt.libdir then
+        envs.LD_LIBRARY_PATH = qt.libdir .. ":" .. (os.getenv("LD_LIBRARY_PATH") or "")
+    end
+    if qt.pluginsdir then
+        envs.QT_PLUGIN_PATH = qt.pluginsdir
+    end
+    
+    -- 设置Qt安装目录
+    if qt.sdkdir then
+        envs.QTDIR = qt.sdkdir
     end
 
-    -- 构造 linuxdeployqt 参数
+    -- 构建linuxdeployqt命令参数
     local args = { desktop_file, "-bundle-non-qt-libs" }
+    
+    -- 添加详细输出选项
+    table.insert(args, "-verbose=2")
+    
+    -- 如果是Qt6，添加特定选项
+    if qt_version and qt_version:startswith("6") then
+        table.insert(args, "-qmldir=" .. (qt.qmldir or path.join(qt.sdkdir, "qml")))
+    elseif qt_version and qt_version:startswith("5") then
+        -- Qt5特定选项
+        if qt.qmldir and os.isdir(qt.qmldir) then
+            table.insert(args, "-qmldir=" .. qt.qmldir)
+        end
+    end
 
-    print("Running linuxdeployqt with args:", table.concat(args, " "))
+    print("Running linuxdeployqt with command:")
+    print("  Program:", linuxdeployqt.program)
+    print("  Args:", table.concat(args, " "))
+    print("  Working directory:", appdir)
+    print("  Environment variables:")
+    for k, v in pairs(envs) do
+        print("    " .. k .. "=" .. v)
+    end
+
+    -- 执行linuxdeployqt
+    print("Executing linuxdeployqt...", linuxdeployqt.program, table.concat(args, " "))
     local ok, err = os.iorunv(linuxdeployqt.program, args, {curdir = appdir, envs = envs})
     if not ok then
-        print("Warning: linuxdeployqt failed:", err)
+        print("Error: linuxdeployqt failed:", err or "unknown error")
         return false
     end
 
-    -- 输出收集的库和插件
-    local collected_libs = os.files(path.join(lib_dir, "*.so*"))
-    print("Qt libraries collected:", #collected_libs)
-    for _, lib in ipairs(collected_libs) do
-        print("  -", lib)
+    -- 验证结果：检查收集的库和插件
+    local lib_dir = path.join(appdir, "usr/lib")
+    local plugins_dir = path.join(appdir, "usr/plugins")
+    
+    local success = false
+    
+    -- 检查库目录
+    if os.isdir(lib_dir) then
+        local collected_libs = os.files(path.join(lib_dir, "libQt*.so*"))
+        print("Qt libraries collected:", #collected_libs)
+        if #collected_libs > 0 then
+            success = true
+            for _, lib in ipairs(collected_libs) do
+                print("  - " .. path.filename(lib))
+            end
+        else
+            print("Warning: No Qt libraries found in lib directory")
+        end
+        
+        -- 显示所有收集的库
+        local all_libs = os.files(path.join(lib_dir, "*.so*"))
+        if #all_libs > #collected_libs then
+            print("Other libraries collected:", #all_libs - #collected_libs)
+        end
+    else
+        print("Warning: Library directory not created:", lib_dir)
     end
 
-    local collected_plugins = os.files(path.join(plugins_dir, "**"))
-    print("Qt plugins collected:", #collected_plugins)
-    for _, plugin in ipairs(collected_plugins) do
-        print("  -", plugin)
+    -- 检查插件目录
+    if os.isdir(plugins_dir) then
+        local collected_plugins = os.files(path.join(plugins_dir, "**"))
+        print("Qt plugins collected:", #collected_plugins)
+        if #collected_plugins > 0 then
+            success = true
+            -- 显示插件分类
+            local plugin_categories = {}
+            for _, plugin in ipairs(collected_plugins) do
+                local category = path.directory(path.relative(plugin, plugins_dir))
+                plugin_categories[category] = (plugin_categories[category] or 0) + 1
+            end
+            for category, count in pairs(plugin_categories) do
+                print("  - " .. category .. ": " .. count .. " files")
+            end
+        else
+            print("Warning: No Qt plugins found")
+        end
+    else
+        print("Warning: Plugins directory not created:", plugins_dir)
     end
 
-    return true
+    -- 最终验证：检查可执行文件的Qt依赖是否满足
+    if success then
+        print("Verifying Qt dependencies in AppDir...")
+        local ldd_output = os.iorunv("ldd", {main_executable})
+        if ldd_output then
+            local missing_qt_libs = {}
+            for line in ldd_output:gmatch("[^\r\n]+") do
+                local lib_name = line:match("(libQt%w+%.so[%d%.]*)")
+                if lib_name then
+                    local lib_path = line:match("=> ([^%s]+)")
+                    if lib_path and lib_path:find("not found") then
+                        table.insert(missing_qt_libs, lib_name)
+                    elseif lib_path and not lib_path:startswith(lib_dir) then
+                        -- Qt库没有指向AppDir中的版本，可能有问题
+                        print("Warning: Qt library not from AppDir:", lib_name, "->", lib_path)
+                    end
+                end
+            end
+            
+            if #missing_qt_libs > 0 then
+                print("Error: Missing Qt libraries after linuxdeployqt:")
+                for _, lib in ipairs(missing_qt_libs) do
+                    print("  - " .. lib)
+                end
+                success = false
+            else
+                print("Qt dependency verification successful")
+            end
+        end
+    end
+
+    if success then
+        print("linuxdeployqt completed successfully")
+    else
+        print("linuxdeployqt completed with issues")
+    end
+
+    return success
 end
 
 -- get appimage output file
@@ -514,51 +638,11 @@ function _collect_deps_manually(package, appdir)
     return true
 end
 
--- get Qt version information
-function _get_qt_version()
-    local qt5widgets = try { function() return require("qt5widgets") end }
-    if qt5widgets or (package and package:has_deps("qt5widgets")) then
-        print("Detected Qt version via add_requires(\"qt5widgets\"): 5.15.2")
-        return "5.15.2"
-    end
-
-    local qt6widgets = try { function() return require("qt6widgets") end }
-    if qt6widgets or (package and package:has_deps("qt6widgets")) then
-        print("Detected Qt version via add_requires(\"qt6widgets\"): 6.7.2")
-        return "6.9.1"
-    end
-
-    -- 1. 官方 find_package（支持 Qt5/Qt6、跨平台）
-    local qt = find_package("qt")
-    if qt and qt.version then
-        print("Detected Qt version via find_package: " .. qt.version)
-        return qt.version
-    end
-
-    -- 2. 回退：qmake -query QT_VERSION
-    local qmake = find_tool("qmake") or find_tool("qmake-qt5") or find_tool("qmake-qt6")
-    if qmake then
-        local out = try { function() return os.iorunv(qmake.program, {"-query", "QT_VERSION"}) end }
-        if out then
-            local ver = out:trim()
-            print("Detected Qt version via qmake: " .. ver)
-            return ver
-        end
-    end
-
-    -- 3. 彻底失败
-    print("Could not determine Qt version")
-    return nil
-end
-
 -- pack appimage package
 function _pack_appimage(appimagetool, package)
-    -- 检查是否是Qt项目
     local is_qt = _is_qt_project(package)
     if is_qt then
         print("Detected Qt project - will use Qt-specific packaging")
-        local qt_version = _get_qt_version()
-        print("Using Qt version:", qt_version)
     end
     
     -- create temporary AppDir
@@ -638,17 +722,17 @@ function _pack_appimage(appimagetool, package)
     
     if is_qt then
         -- Qt项目使用 linuxqtdeploy
-        print("Attempting to use linuxqtdeploy for Qt project...")
-        local linuxqtdeploy = _get_linuxdeployqt()
-        if linuxqtdeploy then
-            deps_collected = _collect_qt_deps_with_linuxdeployqt(package, appdir, linuxqtdeploy)
+        print("Attempting to use linuxdeployqt for Qt project...")
+        local linuxdeployqt = _get_linuxdeployqt()
+        if linuxdeployqt then
+            deps_collected = _collect_qt_deps_with_linuxdeployqt(package, appdir, linuxdeployqt)
             if deps_collected then
-                print("Qt dependencies collected successfully with linuxqtdeploy")
+                print("Qt dependencies collected successfully with linuxdeployqt")
             else
-                print("linuxqtdeploy failed, will try fallback methods")
+                print("linuxdeployqt failed, will try fallback methods")
             end
         else
-            print("linuxqtdeploy not available, will try fallback methods")
+            print("linuxdeployqt not available, will try fallback methods")
         end
     end
     
@@ -696,7 +780,7 @@ function _pack_appimage(appimagetool, package)
     os.vrunv(appimagetool.program, {appdir, appimage_file}, {envs = envs})
 
     -- 清理临时目录
-    -- os.tryrm(appdir)
+    os.tryrm(appdir)
 end
 
 function main(package)
