@@ -120,6 +120,99 @@ function _is_qt_project(package)
     return false
 end
 
+function _check_qml_usage(package, app_source)
+    -- Method 1: Check for QML-related libraries in links
+    local links = package:get("links")
+    if links then
+        for _, link in ipairs(links) do
+            if link:lower():find("qml") or link:lower():find("quick") then
+                print("QML usage detected via link:", link)
+                return true
+            end
+        end
+    end
+
+    -- Method 2: Check executable for QML/Quick dependencies
+    local macos_dir = path.join(app_source, "Contents", "MacOS")
+    if os.isdir(macos_dir) then
+        local executables = os.files(path.join(macos_dir, "*"))
+        for _, executable in ipairs(executables) do
+            if os.isfile(executable) then
+                local otool_output = os.iorunv("otool", {"-L", executable})
+                if otool_output then
+                    if otool_output:find("QtQml") or otool_output:find("QtQuick") then
+                        print("QML usage detected via otool analysis")
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
+    -- Method 3: Check for .qml files in project
+    local qml_files = os.files("**.qml")
+    if qml_files and #qml_files > 0 then
+        print("QML usage detected via .qml files:", #qml_files, "files found")
+        return true
+    end
+
+    -- Method 4: Check source files for QML-related includes
+    local srcfiles, _ = package:sourcefiles()
+    for _, srcfile in ipairs(srcfiles or {}) do
+        if srcfile:endswith(".cpp") or srcfile:endswith(".cc") or srcfile:endswith(".cxx") or srcfile:endswith(".mm") then
+            if os.isfile(srcfile) then
+                local content = io.readfile(srcfile)
+                if content and (content:find("#include.*QQml") or 
+                               content:find("#include.*QQuick") or
+                               content:find("QQmlEngine") or
+                               content:find("QQuickView")) then
+                    print("QML usage detected via source file analysis:", srcfile)
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+function _find_valid_qml_dir(qt)
+    local possible_qml_dirs = {}
+    
+    -- Standard QML directory locations
+    if qt.sdkdir then
+        table.insert(possible_qml_dirs, path.join(qt.sdkdir, "qml"))
+        table.insert(possible_qml_dirs, path.join(qt.sdkdir, "lib", "qml"))
+        table.insert(possible_qml_dirs, path.join(qt.sdkdir, "share", "qt6", "qml"))
+    end
+    
+    -- Qt-specific qmldir if available
+    if qt.qmldir then
+        table.insert(possible_qml_dirs, qt.qmldir)
+    end
+    
+    -- Project-specific QML directories
+    table.insert(possible_qml_dirs, "qml")
+    table.insert(possible_qml_dirs, "src/qml")
+    table.insert(possible_qml_dirs, "resources/qml")
+    
+    for _, qml_dir in ipairs(possible_qml_dirs) do
+        if os.isdir(qml_dir) then
+            print("Found valid QML directory:", qml_dir)
+            return qml_dir
+        end
+    end
+    
+    -- If no existing QML directory found, create a temporary empty one
+    local temp_qml_dir = path.join(os.tmpdir(), "empty_qml")
+    if not os.isdir(temp_qml_dir) then
+        os.mkdir(temp_qml_dir)
+        print("Created temporary empty QML directory:", temp_qml_dir)
+    end
+    
+    return temp_qml_dir
+end
+
 -- deploy Qt dependencies using macdeployqt
 function _deploy_qt_dependencies(package, app_source, macdeployqt)
     print("Deploying Qt dependencies using macdeployqt...")
@@ -197,17 +290,22 @@ function _deploy_qt_dependencies(package, app_source, macdeployqt)
     -- Add verbose output
     table.insert(args, "-verbose=2")
     
-    -- Add DMG creation flag to ensure all dependencies are bundled
-    table.insert(args, "-dmg")
+    -- Check if this project actually uses QML before adding qmldir
+    local uses_qml = _check_qml_usage(package, app_source)
     
-    -- Add qmldir only if it exists
-    if qt.qmldir and os.isdir(qt.qmldir) then
-        table.insert(args, "-qmldir")
-        table.insert(args, qt.qmldir)
+    if uses_qml then
+        -- Find a valid QML directory
+        local qml_dir = _find_valid_qml_dir(qt)
+        if qml_dir then
+            table.insert(args, "-qmldir")
+            table.insert(args, qml_dir)
+            print("Using QML directory:", qml_dir)
+        else
+            print("Warning: QML usage detected but no valid QML directory found")
+        end
     else
-        print("No valid qmldir found, skipping -qmldir option")
+        print("No QML usage detected, skipping -qmldir option")
     end
-
 
     print("Running macdeployqt with command:")
     print("  Program:", macdeployqt.program)
@@ -290,13 +388,6 @@ function _deploy_qt_dependencies(package, app_source, macdeployqt)
                 print("Qt dependency verification successful - all Qt references are bundled")
             end
         end
-    end
-
-    -- Clean up any .dmg file created by macdeployqt (we'll create our own)
-    local auto_dmg = app_source:gsub("%.app$", ".dmg")
-    if os.isfile(auto_dmg) then
-        print("Removing auto-generated DMG from macdeployqt:", auto_dmg)
-        os.rm(auto_dmg)
     end
 
     if success then
