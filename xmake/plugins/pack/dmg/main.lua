@@ -200,20 +200,14 @@ function _deploy_qt_dependencies(package, app_source, macdeployqt)
     -- Add DMG creation flag to ensure all dependencies are bundled
     table.insert(args, "-dmg")
     
-    -- Handle Qt version-specific options
-    if qt_version and qt_version:startswith("6") then
-        -- Qt6 specific options
-        if qt.qmldir and os.isdir(qt.qmldir) then
-            table.insert(args, "-qmldir")
-            table.insert(args, qt.qmldir)
-        end
-    elseif qt_version and qt_version:startswith("5") then
-        -- Qt5 specific options
-        if qt.qmldir and os.isdir(qt.qmldir) then
-            table.insert(args, "-qmldir")
-            table.insert(args, qt.qmldir)
-        end
+    -- Add qmldir only if it exists
+    if qt.qmldir and os.isdir(qt.qmldir) then
+        table.insert(args, "-qmldir")
+        table.insert(args, qt.qmldir)
+    else
+        print("No valid qmldir found, skipping -qmldir option")
     end
+
 
     print("Running macdeployqt with command:")
     print("  Program:", macdeployqt.program)
