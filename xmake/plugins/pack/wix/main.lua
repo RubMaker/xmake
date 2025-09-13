@@ -190,7 +190,7 @@ function _deploy_qt_dependencies(package, windeployqt)
     -- Create a temporary deployment directory
     local deploy_dir = path.join(os.tmpdir(), package:name() .. "_qt_deploy")
     if os.isdir(deploy_dir) then
-        os.vrunv("rmdir", {"/s", "/q", deploy_dir})
+        os.vrunv("rm", {"-r", "-fo", deploy_dir})
     end
     os.mkdir(deploy_dir)
     

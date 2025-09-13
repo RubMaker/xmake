@@ -265,7 +265,7 @@ function _deploy_qt_dependencies(package, windeployqt)
     print("Using temporary deployment directory:", deploy_dir)
     if os.isdir(deploy_dir) then
         print("1111111 Removing existing temporary directory:", deploy_dir)
-        os.vrunv("rmdir", {"/s", "/q", deploy_dir})
+        os.vrunv("rm", {"-r", "-fo", deploy_dir})
     end
     print("2222222 Creating temporary directory:", deploy_dir)
     os.mkdir(deploy_dir)
