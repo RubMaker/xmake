@@ -329,7 +329,7 @@ function _get_other_commands(package, cmd, opt)
     opt = table.join(cmd.opt or {}, opt)
     local result = ""
     local kind = cmd.kind
-    local id = _get_id(os.mtime())
+    local id = _get_id()
     if kind == "rm" then
         local subdirectory = _translate_filepath(package, path.directory(cmd.filepath))
         subdirectory = subdirectory ~= "." and string.format([[Subdirectory="%s"]], subdirectory) or ""
