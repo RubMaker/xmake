@@ -56,6 +56,16 @@ function _check_makensis(program)
     os.tryrm(tmpdir)
 end
 
+local function _log_deployed_files(deploy_dir)
+    print("Deployed files and directories:")
+    for _, file in ipairs(os.files(path.join(deploy_dir, "**"))) do
+        print("  File:", file)
+    end
+    for _, dir in ipairs(os.dirs(path.join(deploy_dir, "**"))) do
+        print("  Directory:", dir)
+    end
+end
+
 -- get the makensis
 function _get_makensis()
 
@@ -336,6 +346,8 @@ function _deploy_qt_dependencies(package, windeployqt)
     end
 
     print("windeployqt completed successfully")
+    -- 调用 _log_deployed_files 打印部署目录内容
+    _log_deployed_files(deploy_dir)
     
     -- Collect all deployed files and generate NSIS commands
     local nsis_commands = {}
