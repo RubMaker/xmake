@@ -14,6 +14,7 @@ URL:        ${PACKAGE_HOMEPAGE}
 Source0:    ${PACKAGE_ARCHIVEFILE}
 
 ${PACKAGE_BUILDREQUIRES}
+${PACKAGE_REQUIRES}
 
 %description
 ${PACKAGE_DESCRIPTION}
@@ -36,4 +37,3 @@ find . -type f | sed 's!^\./!/!' > %{_builddir}/_installedfiles.txt
 %changelog
 * ${PACKAGE_DATE} ${PACKAGE_MAINTAINER} - ${PACKAGE_VERSION}-1
 - Update to ${PACKAGE_VERSION}
-

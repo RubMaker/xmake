@@ -25,6 +25,7 @@ import("core.base.hashset")
 import("lib.detect.find_tool")
 import("lib.detect.find_file")
 import("utils.archive")
+import("detect.sdks.find_qt")
 import("private.action.require.impl.packagenv")
 import("private.action.require.impl.install_packages")
 import(".batchcmds")
@@ -53,6 +54,244 @@ function _get_rpmbuild()
     end
     assert(rpmbuild, "rpmbuild not found!")
     return rpmbuild, oldenvs
+end
+-- detect if this is a Qt project
+function _is_qt_project(package)
+    -- Method 1: Check for Qt libraries in links
+    local links = package:get("links")
+    if links then
+        for _, link in ipairs(links) do
+            if link:lower():find("qt") then
+                print("Qt project detected via link:", link)
+                return true
+            end
+        end
+    end
+
+    -- Method 2: Check for Qt packages in requirements
+    local requires = package:get("requires")
+    if requires then
+        for _, require in ipairs(requires) do
+            if require:lower():find("qt") then
+                print("Qt project detected via requirement:", require)
+                return true
+            end
+        end
+    end
+
+    -- Method 3: Check executable for Qt dependencies using ldd (if available)
+    local main_executable = nil
+    
+    -- Try to find the main executable path
+    local install_rootdir = package:install_rootdir()
+    if install_rootdir then
+        local bin_dir = path.join(install_rootdir, "bin")
+        if os.isdir(bin_dir) then
+            local exe_path = path.join(bin_dir, package:name())
+            if os.isfile(exe_path) then
+                main_executable = exe_path
+            end
+        end
+    end
+    
+    if main_executable and os.isfile(main_executable) then
+        print("Checking executable for Qt dependencies:", main_executable)
+        local ldd_output = os.iorunv("ldd", {main_executable})
+        if ldd_output then
+            -- Check for Qt libraries in ldd output
+            if ldd_output:lower():find("libqt") or 
+               ldd_output:lower():find("qt5") or 
+               ldd_output:lower():find("qt6") then
+                print("Qt project detected via ldd analysis")
+                return true
+            end
+        end
+    end
+
+    -- Method 4: Check source files for Qt headers/includes
+    local srcfiles, _ = package:sourcefiles()
+    for _, srcfile in ipairs(srcfiles or {}) do
+        if srcfile:endswith(".cpp") or srcfile:endswith(".cc") or srcfile:endswith(".cxx") then
+            if os.isfile(srcfile) then
+                local content = io.readfile(srcfile)
+                if content and (content:find("#include.*[Qq][Tt]") or 
+                               content:find("#include.*<Q") or
+                               content:find("QApplication") or
+                               content:find("QWidget") or
+                               content:find("QMainWindow")) then
+                    print("Qt project detected via source file analysis:", srcfile)
+                    return true
+                end
+            end
+        end
+    end
+
+    print("No Qt dependencies detected")
+    return false
+end
+
+-- get Qt build requirements
+function _get_qt_buildrequires(package)
+    local qt = find_qt()
+    local qt_requires = {}
+    
+    if qt then
+        local qt_version = qt.sdkver or "5.15"
+        print("Found Qt SDK version:", qt_version)
+        
+        if qt_version:startswith("6") then
+            -- Qt6 requirements
+            table.insert(qt_requires, "BuildRequires: qt6-qtbase-devel")
+            table.insert(qt_requires, "BuildRequires: qt6-qttools-devel")
+            
+            -- Check for specific Qt6 modules based on links
+            local links = package:get("links") or {}
+            for _, link in ipairs(links) do
+                local link_lower = link:lower()
+                if link_lower:find("qt6widgets") or link_lower:find("qtwidgets") then
+                    table.insert(qt_requires, "BuildRequires: qt6-qtbase-devel")
+                end
+                if link_lower:find("qt6core") or link_lower:find("qtcore") then
+                    -- Already included in qtbase-devel
+                end
+                if link_lower:find("qt6gui") or link_lower:find("qtgui") then
+                    -- Already included in qtbase-devel
+                end
+                if link_lower:find("qt6network") or link_lower:find("qtnetwork") then
+                    table.insert(qt_requires, "BuildRequires: qt6-qtbase-devel")
+                end
+                if link_lower:find("qt6multimedia") or link_lower:find("qtmultimedia") then
+                    table.insert(qt_requires, "BuildRequires: qt6-qtmultimedia-devel")
+                end
+                if link_lower:find("qt6opengl") or link_lower:find("qtopengl") then
+                    table.insert(qt_requires, "BuildRequires: qt6-qtbase-devel")
+                end
+                if link_lower:find("qt6svg") or link_lower:find("qtsvg") then
+                    table.insert(qt_requires, "BuildRequires: qt6-qtsvg-devel")
+                end
+                if link_lower:find("qt6xml") or link_lower:find("qtxml") then
+                    table.insert(qt_requires, "BuildRequires: qt6-qtbase-devel")
+                end
+            end
+        else
+            -- Qt5 requirements (default)
+            table.insert(qt_requires, "BuildRequires: qt5-qtbase-devel")
+            table.insert(qt_requires, "BuildRequires: qt5-qttools-devel")
+            
+            -- Check for specific Qt5 modules based on links
+            local links = package:get("links") or {}
+            for _, link in ipairs(links) do
+                local link_lower = link:lower()
+                if link_lower:find("qt5widgets") or link_lower:find("qtwidgets") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtbase-devel")
+                end
+                if link_lower:find("qt5core") or link_lower:find("qtcore") then
+                    -- Already included in qtbase-devel
+                end
+                if link_lower:find("qt5gui") or link_lower:find("qtgui") then
+                    -- Already included in qtbase-devel
+                end
+                if link_lower:find("qt5network") or link_lower:find("qtnetwork") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtbase-devel")
+                end
+                if link_lower:find("qt5multimedia") or link_lower:find("qtmultimedia") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtmultimedia-devel")
+                end
+                if link_lower:find("qt5opengl") or link_lower:find("qtopengl") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtbase-devel")
+                end
+                if link_lower:find("qt5svg") or link_lower:find("qtsvg") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtsvg-devel")
+                end
+                if link_lower:find("qt5xml") or link_lower:find("qtxml") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtbase-devel")
+                end
+                if link_lower:find("qt5quick") or link_lower:find("qtquick") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtdeclarative-devel")
+                end
+                if link_lower:find("qt5qml") or link_lower:find("qtqml") then
+                    table.insert(qt_requires, "BuildRequires: qt5-qtdeclarative-devel")
+                end
+            end
+        end
+    else
+        print("Qt SDK not found, using default Qt5 requirements")
+        -- Default to Qt5 if no Qt SDK is detected but project uses Qt
+        table.insert(qt_requires, "BuildRequires: qt5-qtbase-devel")
+        table.insert(qt_requires, "BuildRequires: qt5-qttools-devel")
+    end
+    
+    -- Remove duplicates
+    local unique_requires = {}
+    local seen = {}
+    for _, req in ipairs(qt_requires) do
+        if not seen[req] then
+            table.insert(unique_requires, req)
+            seen[req] = true
+        end
+    end
+    
+    return unique_requires
+end
+
+-- get Qt runtime requirements
+function _get_qt_runtime_requires(package)
+    local qt = find_qt()
+    local qt_requires = {}
+    
+    if qt then
+        local qt_version = qt.sdkver or "5.15"
+        
+        if qt_version:startswith("6") then
+            -- Qt6 runtime requirements
+            table.insert(qt_requires, "Requires: qt6-qtbase")
+            
+            -- Check for specific Qt6 modules
+            local links = package:get("links") or {}
+            for _, link in ipairs(links) do
+                local link_lower = link:lower()
+                if link_lower:find("qt6multimedia") or link_lower:find("qtmultimedia") then
+                    table.insert(qt_requires, "Requires: qt6-qtmultimedia")
+                end
+                if link_lower:find("qt6svg") or link_lower:find("qtsvg") then
+                    table.insert(qt_requires, "Requires: qt6-qtsvg")
+                end
+            end
+        else
+            -- Qt5 runtime requirements
+            table.insert(qt_requires, "Requires: qt5-qtbase")
+            
+            -- Check for specific Qt5 modules
+            local links = package:get("links") or {}
+            for _, link in ipairs(links) do
+                local link_lower = link:lower()
+                if link_lower:find("qt5multimedia") or link_lower:find("qtmultimedia") then
+                    table.insert(qt_requires, "Requires: qt5-qtmultimedia")
+                end
+                if link_lower:find("qt5svg") or link_lower:find("qtsvg") then
+                    table.insert(qt_requires, "Requires: qt5-qtsvg")
+                end
+                if link_lower:find("qt5quick") or link_lower:find("qtquick") then
+                    table.insert(qt_requires, "Requires: qt5-qtdeclarative")
+                end
+            end
+        end
+    else
+        -- Default Qt5 runtime requirements
+        table.insert(qt_requires, "Requires: qt5-qtbase")
+    end
+    
+    -- Remove duplicates
+    local unique_requires = {}
+    local seen = {}
+    for _, req in ipairs(qt_requires) do
+        if not seen[req] then
+            table.insert(unique_requires, req)
+            seen[req] = true
+        end
+    end
+    
+    return unique_requires
 end
 
 -- get archive file
@@ -129,6 +368,7 @@ end
 
 -- get specvars
 function _get_specvars(package)
+    local is_qt = _is_qt_project(package)
     local specvars = table.clone(package:specvars())
     specvars.PACKAGE_ARCHIVEFILE = path.filename(_get_archivefile(package))
     local datestr = os.iorunv("date", {"+%a %b %d %Y"}, {envs = {LC_TIME = "en_US"}})
@@ -184,6 +424,33 @@ function _get_specvars(package)
             if #requires > 0 then
                 table.insert(requires, "BuildRequires: gcc")
                 table.insert(requires, "BuildRequires: gcc-c++")
+            end
+            if is_qt then
+                local qt_buildrequires = _get_qt_buildrequires(package)
+                for _, req in ipairs(qt_buildrequires) do
+                    table.insert(requires, req)
+                end
+            end
+        end
+        
+        return table.concat(requires, "\n")
+    end
+    
+    -- Add Qt runtime requirements if this is a Qt project
+    specvars.PACKAGE_REQUIRES = function ()
+        local requires = {}
+        local runtime_requires = package:get("requires")
+        
+        if runtime_requires then
+            -- Use user-specified runtime requirements
+            for _, require in ipairs(runtime_requires) do
+                table.insert(requires, "Requires: " .. require)
+            end
+        end
+        if is_qt then
+            local qt_requires = _get_qt_runtime_requires(package)
+            for _, req in ipairs(qt_requires) do
+                table.insert(requires, req)
             end
         end
         return table.concat(requires, "\n")
@@ -283,6 +550,12 @@ function main(package)
     end
 
     cprint("packing %s", package:outputfile())
+    
+    -- Check if this is a Qt project and inform the user
+    local is_qt = _is_qt_project(package)
+    if is_qt then
+        cprint("Qt project detected - adding Qt dependencies to RPM spec")
+    end
 
     -- get rpmbuild
     local rpmbuild, oldenvs = _get_rpmbuild()

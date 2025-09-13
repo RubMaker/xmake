@@ -24,6 +24,7 @@ import("core.base.semver")
 import("lib.detect.find_tool")
 import("private.action.require.impl.packagenv")
 import("private.action.require.impl.install_packages")
+import("detect.sdks.find_qt")
 import(".filter")
 import(".batchcmds")
 
@@ -89,6 +90,166 @@ end
 -- translate the file path
 function _translate_filepath(package, filepath)
     return filepath:replace(package:install_rootdir(), "$InstDir", {plain = true})
+end
+
+-- check if this is a Qt project
+function _is_qt_project(package)
+    -- Method 1: Check for Qt in package links
+    local links = package:get("links")
+    if links then
+        for _, link in ipairs(links) do
+            if link:lower():find("qt") then
+                print("Qt project detected via link:", link)
+                return true
+            end
+        end
+    end
+
+    -- Method 2: Check executable for Qt dependencies using ldd/objdump on Windows
+    local main_executable = nil
+    
+    -- Try to find the main executable path
+    local install_rootdir = package:install_rootdir()
+    if install_rootdir then
+        local bin_dir = path.join(install_rootdir, "bin")
+        if os.isdir(bin_dir) then
+            local exe_path = path.join(bin_dir, package:name() .. ".exe")
+            if os.isfile(exe_path) then
+                main_executable = exe_path
+            end
+        end
+    end
+    
+    -- If we couldn't find it in install dir, check if it exists in build output
+    if not main_executable then
+        local outputfile = package:outputfile()
+        if outputfile and os.isfile(outputfile) then
+            main_executable = outputfile
+        end
+    end
+    
+    if main_executable and os.isfile(main_executable) then
+        print("Checking executable for Qt dependencies:", main_executable)
+        -- Use objdump or dumpbin to check dependencies on Windows
+        local objdump_output = os.iorunv("objdump", {"-p", main_executable})
+        if objdump_output then
+            if objdump_output:lower():find("qt5") or 
+               objdump_output:lower():find("qt6") or
+               objdump_output:lower():find("libqt") then
+                print("Qt project detected via objdump analysis")
+                return true
+            end
+        end
+    end
+
+    -- Method 3: Check source files for Qt headers/includes
+    local srcfiles, _ = package:sourcefiles()
+    for _, srcfile in ipairs(srcfiles or {}) do
+        if srcfile:endswith(".cpp") or srcfile:endswith(".cc") or srcfile:endswith(".cxx") then
+            if os.isfile(srcfile) then
+                local content = io.readfile(srcfile)
+                if content and (content:find("#include.*[Qq][Tt]") or 
+                               content:find("#include.*<Q") or
+                               content:find("QApplication") or
+                               content:find("QWidget") or
+                               content:find("QMainWindow")) then
+                    print("Qt project detected via source file analysis:", srcfile)
+                    return true
+                end
+            end
+        end
+    end
+
+    print("No Qt dependencies detected")
+    return false
+end
+
+-- get Qt deployment commands for Windows
+function _get_qt_deployment_commands(package)
+    local qt = find_qt()
+    if not qt then
+        print("Warning: Qt SDK not found, cannot deploy Qt dependencies")
+        return {}
+    end
+
+    local qt_version = qt.sdkver or "5.15.3"
+    local is_qt6 = qt_version:startswith("6")
+    
+    print("Target Qt version:", qt_version)
+    print("Qt SDK directory:", qt.sdkdir)
+    print("Qt binary directory:", qt.bindir)
+    print("Qt library directory:", qt.libdir)
+    print("Qt plugins directory:", qt.pluginsdir)
+
+    local commands = {}
+    
+    -- Find windeployqt tool
+    local windeployqt_path = nil
+    if qt.bindir then
+        local windeployqt_exe = path.join(qt.bindir, "windeployqt.exe")
+        if os.isfile(windeployqt_exe) then
+            windeployqt_path = windeployqt_exe
+        end
+    end
+    
+    if windeployqt_path then
+        -- Use windeployqt to deploy Qt dependencies
+        local target_exe = path.join("$InstDir", "bin", package:name() .. ".exe")
+        local windeployqt_cmd = string.format('ExecWait \'"%s" --dir "$InstDir" "%s"\'', 
+                                            windeployqt_path, target_exe)
+        table.insert(commands, windeployqt_cmd)
+    else
+        -- Manual Qt deployment
+        print("windeployqt not found, using manual Qt deployment")
+        
+        -- Deploy Qt core libraries
+        local qt_libs = {
+            "Qt5Core.dll", "Qt5Gui.dll", "Qt5Widgets.dll", -- Qt5 core
+            "Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", -- Qt6 core
+        }
+        
+        -- Add additional libraries based on common usage
+        local additional_libs = {
+            "Qt5Network.dll", "Qt5Sql.dll", "Qt5Xml.dll", "Qt5PrintSupport.dll",
+            "Qt6Network.dll", "Qt6Sql.dll", "Qt6Xml.dll", "Qt6PrintSupport.dll",
+        }
+        table.join2(qt_libs, additional_libs)
+        
+        for _, lib in ipairs(qt_libs) do
+            local lib_path = path.join(qt.libdir or qt.bindir, lib)
+            if os.isfile(lib_path) then
+                table.insert(commands, string.format('SetOutPath "$InstDir\\bin"'))
+                table.insert(commands, string.format('File "%s"', lib_path))
+            end
+        end
+        
+        -- Deploy Qt plugins
+        if qt.pluginsdir and os.isdir(qt.pluginsdir) then
+            local plugin_categories = {"platforms", "imageformats", "iconengines", "styles"}
+            for _, category in ipairs(plugin_categories) do
+                local plugin_dir = path.join(qt.pluginsdir, category)
+                if os.isdir(plugin_dir) then
+                    table.insert(commands, string.format('SetOutPath "$InstDir\\%s"', category))
+                    local plugin_files = os.files(path.join(plugin_dir, "*.dll"))
+                    for _, plugin_file in ipairs(plugin_files) do
+                        table.insert(commands, string.format('File "%s"', plugin_file))
+                    end
+                end
+            end
+        end
+        
+        -- Create qt.conf to specify plugin paths
+        local qt_conf_content = string.format([[
+[Paths]
+Plugins = .
+]])
+        local qt_conf_file = os.tmpfile() .. ".conf"
+        io.writefile(qt_conf_file, qt_conf_content)
+        table.insert(commands, string.format('SetOutPath "$InstDir\\bin"'))
+        table.insert(commands, string.format('File "/oname=qt.conf" "%s"', qt_conf_file))
+    end
+    
+    return commands
 end
 
 -- get command string
@@ -164,12 +325,44 @@ end
 
 -- get install commands
 function _get_installcmds(package)
-    return _get_commands_string(package, batchcmds.get_installcmds(package):cmds(), {install = true})
+    local cmdstrs = _get_commands_string(package, batchcmds.get_installcmds(package):cmds(), {install = true})
+    
+    -- Add Qt deployment commands if this is a Qt project
+    if _is_qt_project(package) then
+        print("Adding Qt deployment commands to installer")
+        local qt_commands = _get_qt_deployment_commands(package)
+        if #qt_commands > 0 then
+            cmdstrs = cmdstrs .. "\n  ; Qt deployment commands\n  " .. table.concat(qt_commands, "\n  ")
+        end
+    end
+    
+    return cmdstrs
 end
 
 -- get uninstall commands
 function _get_uninstallcmds(package)
-    return _get_commands_string(package, batchcmds.get_uninstallcmds(package):cmds(), {install = false})
+    local cmdstrs = _get_commands_string(package, batchcmds.get_uninstallcmds(package):cmds(), {install = false})
+    
+    -- Add Qt cleanup commands if this is a Qt project
+    if _is_qt_project(package) then
+        print("Adding Qt cleanup commands to uninstaller")
+        local qt_cleanup_commands = {
+            '${unRMDirIfExists} "$InstDir\\platforms"',
+            '${unRMDirIfExists} "$InstDir\\imageformats"',
+            '${unRMDirIfExists} "$InstDir\\iconengines"',
+            '${unRMDirIfExists} "$InstDir\\styles"',
+            '${unRMFileIfExists} "$InstDir\\bin\\qt.conf"',
+            '${unRMFileIfExists} "$InstDir\\bin\\Qt5Core.dll"',
+            '${unRMFileIfExists} "$InstDir\\bin\\Qt5Gui.dll"',
+            '${unRMFileIfExists} "$InstDir\\bin\\Qt5Widgets.dll"',
+            '${unRMFileIfExists} "$InstDir\\bin\\Qt6Core.dll"',
+            '${unRMFileIfExists} "$InstDir\\bin\\Qt6Gui.dll"',
+            '${unRMFileIfExists} "$InstDir\\bin\\Qt6Widgets.dll"',
+        }
+        cmdstrs = cmdstrs .. "\n  ; Qt cleanup commands\n  " .. table.concat(qt_cleanup_commands, "\n  ")
+    end
+    
+    return cmdstrs
 end
 
 -- get value and filter it
@@ -302,6 +495,12 @@ function main(package)
     end
 
     cprint("packing %s", package:outputfile())
+
+    -- check if this is a Qt project
+    local is_qt = _is_qt_project(package)
+    if is_qt then
+        cprint("Detected Qt project - will include Qt deployment")
+    end
 
     -- get makensis
     local makensis, oldenvs = _get_makensis()

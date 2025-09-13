@@ -19,6 +19,7 @@
 --
 
 import("lib.detect.find_tool")
+import("detect.sdks.find_qt")
 import("private.action.require.impl.packagenv")
 import("private.action.require.impl.install_packages")
 import(".batchcmds")
@@ -47,6 +48,203 @@ function _get_wix()
     end
     assert(wix, "wix not found (ensure that wix is up to date)!")
     return wix, oldenvs
+end
+
+-- detect if this is a Qt project
+function _is_qt_project(package)
+    -- Method 1: Check for Qt libraries in links
+    local links = package:get("links")
+    if links then
+        for _, link in ipairs(links) do
+            if link:lower():find("qt") then
+                print("Qt project detected via link:", link)
+                return true
+            end
+        end
+    end
+
+    -- Method 2: Check for Qt packages in requirements
+    local requires = package:get("requires")
+    if requires then
+        for _, require in ipairs(requires) do
+            if require:lower():find("qt") then
+                print("Qt project detected via requirement:", require)
+                return true
+            end
+        end
+    end
+
+    -- Method 3: Check executable for Qt dependencies (Windows-specific using dumpbin if available)
+    local main_executable = nil
+    
+    -- Try to find the main executable path
+    local install_rootdir = package:install_rootdir()
+    if install_rootdir then
+        local bin_dir = path.join(install_rootdir, "bin")
+        if os.isdir(bin_dir) then
+            local exe_path = path.join(bin_dir, package:name() .. ".exe")
+            if os.isfile(exe_path) then
+                main_executable = exe_path
+            end
+        end
+    end
+    
+    if main_executable and os.isfile(main_executable) then
+        print("Checking executable for Qt dependencies:", main_executable)
+        -- Try using dumpbin if available
+        local dumpbin = find_tool("dumpbin")
+        if dumpbin then
+            local dumpbin_output = os.iorunv(dumpbin.program, {"/dependents", main_executable})
+            if dumpbin_output then
+                -- Check for Qt DLLs in dependency output
+                if dumpbin_output:lower():find("qt%d+") or 
+                   dumpbin_output:lower():find("qt5") or 
+                   dumpbin_output:lower():find("qt6") then
+                    print("Qt project detected via dumpbin analysis")
+                    return true
+                end
+            end
+        end
+    end
+
+    -- Method 4: Check source files for Qt headers/includes
+    local srcfiles, _ = package:sourcefiles()
+    for _, srcfile in ipairs(srcfiles or {}) do
+        if srcfile:endswith(".cpp") or srcfile:endswith(".cc") or srcfile:endswith(".cxx") then
+            if os.isfile(srcfile) then
+                local content = io.readfile(srcfile)
+                if content and (content:find("#include.*[Qq][Tt]") or 
+                               content:find("#include.*<Q") or
+                               content:find("QApplication") or
+                               content:find("QWidget") or
+                               content:find("QMainWindow")) then
+                    print("Qt project detected via source file analysis:", srcfile)
+                    return true
+                end
+            end
+        end
+    end
+
+    print("No Qt dependencies detected")
+    return false
+end
+
+-- collect Qt DLLs for Windows packaging
+function _collect_qt_dlls(package, is_qt)
+    if not is_qt then
+        return {}
+    end
+    
+    local qt_dlls = {}
+    local qt = find_qt()
+    
+    if qt and qt.bindir then
+        print("Found Qt SDK at:", qt.sdkdir)
+        print("Qt binary directory:", qt.bindir)
+        print("Qt version:", qt.sdkver or "unknown")
+        
+        local qt_version = qt.sdkver or "5.15"
+        local is_qt6 = qt_version:startswith("6")
+        
+        -- Core Qt DLLs that are almost always needed
+        local core_dlls = {}
+        if is_qt6 then
+            core_dlls = {"Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll"}
+        else
+            core_dlls = {"Qt5Core.dll", "Qt5Gui.dll", "Qt5Widgets.dll"}
+        end
+        
+        -- Check which DLLs actually exist and add them
+        for _, dll_name in ipairs(core_dlls) do
+            local dll_path = path.join(qt.bindir, dll_name)
+            if os.isfile(dll_path) then
+                table.insert(qt_dlls, {dll_path, dll_name})
+                print("Found Qt DLL:", dll_path)
+            end
+        end
+        
+        -- Check for additional Qt modules based on links
+        local links = package:get("links") or {}
+        local additional_dlls = {}
+        
+        for _, link in ipairs(links) do
+            local link_lower = link:lower()
+            if is_qt6 then
+                if link_lower:find("qt6network") or link_lower:find("qtnetwork") then
+                    table.insert(additional_dlls, "Qt6Network.dll")
+                end
+                if link_lower:find("qt6multimedia") or link_lower:find("qtmultimedia") then
+                    table.insert(additional_dlls, "Qt6Multimedia.dll")
+                end
+                if link_lower:find("qt6opengl") or link_lower:find("qtopengl") then
+                    table.insert(additional_dlls, "Qt6OpenGL.dll")
+                end
+                if link_lower:find("qt6svg") or link_lower:find("qtsvg") then
+                    table.insert(additional_dlls, "Qt6Svg.dll")
+                end
+                if link_lower:find("qt6xml") or link_lower:find("qtxml") then
+                    table.insert(additional_dlls, "Qt6Xml.dll")
+                end
+                if link_lower:find("qt6quick") or link_lower:find("qtquick") then
+                    table.insert(additional_dlls, "Qt6Quick.dll")
+                    table.insert(additional_dlls, "Qt6Qml.dll")
+                end
+            else
+                if link_lower:find("qt5network") or link_lower:find("qtnetwork") then
+                    table.insert(additional_dlls, "Qt5Network.dll")
+                end
+                if link_lower:find("qt5multimedia") or link_lower:find("qtmultimedia") then
+                    table.insert(additional_dlls, "Qt5Multimedia.dll")
+                end
+                if link_lower:find("qt5opengl") or link_lower:find("qtopengl") then
+                    table.insert(additional_dlls, "Qt5OpenGL.dll")
+                end
+                if link_lower:find("qt5svg") or link_lower:find("qtsvg") then
+                    table.insert(additional_dlls, "Qt5Svg.dll")
+                end
+                if link_lower:find("qt5xml") or link_lower:find("qtxml") then
+                    table.insert(additional_dlls, "Qt5Xml.dll")
+                end
+                if link_lower:find("qt5quick") or link_lower:find("qtquick") then
+                    table.insert(additional_dlls, "Qt5Quick.dll")
+                    table.insert(additional_dlls, "Qt5Qml.dll")
+                end
+            end
+        end
+        
+        -- Add additional DLLs if they exist
+        for _, dll_name in ipairs(additional_dlls) do
+            local dll_path = path.join(qt.bindir, dll_name)
+            if os.isfile(dll_path) then
+                local already_added = false
+                for _, existing in ipairs(qt_dlls) do
+                    if existing[2] == dll_name then
+                        already_added = true
+                        break
+                    end
+                end
+                if not already_added then
+                    table.insert(qt_dlls, {dll_path, dll_name})
+                    print("Found additional Qt DLL:", dll_path)
+                end
+            end
+        end
+        
+        -- Also include Qt platform plugin DLL (essential for Qt apps on Windows)
+        local platforms_dir = path.join(qt.pluginsdir or path.join(qt.sdkdir, "plugins"), "platforms")
+        if os.isdir(platforms_dir) then
+            local platform_dll = path.join(platforms_dir, "qwindows.dll")
+            if os.isfile(platform_dll) then
+                table.insert(qt_dlls, {platform_dll, "platforms/qwindows.dll"})
+                print("Found Qt platform plugin:", platform_dll)
+            end
+        end
+        
+    else
+        print("Qt SDK not found, cannot collect Qt DLLs automatically")
+    end
+    
+    return qt_dlls
 end
 
 -- translate the file path
@@ -131,7 +329,7 @@ function _get_other_commands(package, cmd, opt)
     opt = table.join(cmd.opt or {}, opt)
     local result = ""
     local kind = cmd.kind
-    local id = _get_id()
+    local id = _get_id(os.mtime())
     if kind == "rm" then
         local subdirectory = _translate_filepath(package, path.directory(cmd.filepath))
         subdirectory = subdirectory ~= "." and string.format([[Subdirectory="%s"]], subdirectory) or ""
@@ -192,12 +390,12 @@ function _build_feature(package, opt)
         for _, file in ipairs(files) do
             local srcfile = file[1]
             local dstname = file[2]
-            table.insert(result, string.format([[<File Source="%s" Name="%s" Id="%s"/>]], srcfile, dstname, _get_id()))
+            table.insert(result, string.format([[<File Source="%s" Name="%s" Id="%s"/>]], srcfile, dstname, _get_id(srcfile .. dstname)))
         end
         table.insert(result, "</Component>")
     end
 
-    table.insert(result, _get_component_string(name .. "Cmds"))
+    table.insert(result, _get_component_string(name .. "Cmds", nil))
     for _, cmd in ipairs(installcmds) do
         table.insert(result, _get_other_commands(package, cmd, {install = true}))
     end
@@ -210,11 +408,56 @@ function _build_feature(package, opt)
     return result
 end
 
+-- build Qt runtime feature
+function _build_qt_feature(package, qt_dlls)
+    if #qt_dlls == 0 then
+        return {}
+    end
+    
+    local result = {}
+    table.insert(result, _get_feature_string("QtRuntime", "Qt Runtime Libraries", {default = true, force = true, description = "Qt runtime libraries required by the application"}))
+    
+    -- Group DLLs by directory
+    local dll_groups = {}
+    for _, dll_info in ipairs(qt_dlls) do
+        local srcfile = dll_info[1]
+        local dstname = dll_info[2]
+        local dstdir = path.directory(dstname)
+        
+        if dstdir == "." or dstdir == "" then
+            dstdir = "bin"  -- Main executable directory
+        end
+        
+        if not dll_groups[dstdir] then
+            dll_groups[dstdir] = {}
+        end
+        table.insert(dll_groups[dstdir], {srcfile, path.filename(dstname)})
+    end
+    
+    -- Create components for each directory
+    for dir, files in pairs(dll_groups) do
+        local component_id = _get_id("QtRuntime" .. dir)
+        table.insert(result, _get_component_string(component_id, dir))
+        
+        for _, file_info in ipairs(files) do
+            local srcfile = file_info[1]
+            local filename = file_info[2]
+            local file_id = _get_id("QtDLL" .. filename)
+            table.insert(result, string.format([[<File Source="%s" Name="%s" Id="%s"/>]], srcfile, filename, file_id))
+        end
+        
+        table.insert(result, "</Component>")
+    end
+    
+    table.insert(result, "</Feature>")
+    return result
+end
+
 -- add to path feature
 function _add_to_path(package)
     local result = {}
     table.insert(result, _get_feature_string("PATH", "Add to PATH", {default = false, force = false, description = "Add to PATH"}))
-    table.insert(result, _get_component_string("PATH"))
+    table.insert(result, _get_component_string("PATH", nil))
     table.insert(result, [[<Environment Id="PATH" Name="PATH"  Value="[INSTALLFOLDER]bin" Permanent="false" Part="last" Action="set" System="true" />]])
     table.insert(result, "</Component>")
     table.insert(result, "</Feature>")
@@ -223,11 +466,21 @@ end
 
 -- get specvars
 function _get_specvars(package)
+    local is_qt = _is_qt_project(package)
+    local qt_dlls = _collect_qt_dlls(package, is_qt)
+    
     local installcmds = batchcmds.get_installcmds(package):cmds()
     local specvars = table.clone(package:specvars())
 
     local features = {}
     table.join2(features, _build_feature(package, {default = true, force = true, config_dir = true}))
+    
+    -- Add Qt runtime feature if this is a Qt project
+    if is_qt and #qt_dlls > 0 then
+        print("Adding Qt runtime libraries to MSI package")
+        table.join2(features, _build_qt_feature(package, qt_dlls))
+    end
+    
     table.join2(features, _add_to_path(package))
     for name, component in table.orderpairs(package:components()) do
         table.join2(features, _build_feature(component, {name = "Install " .. name}))
@@ -252,6 +505,18 @@ function _get_specvars(package)
     if package:get("company") == nil or package:get("company") == "" then
         specvars.PACKAGE_COMPANY = package:name()
     end
+    
+    -- Add Qt-specific variables if needed
+    if is_qt then
+        specvars.PACKAGE_IS_QT = "true"
+        local qt = find_qt()
+        if qt then
+            specvars.PACKAGE_QT_VERSION = qt.sdkver or "unknown"
+        end
+    else
+        specvars.PACKAGE_IS_QT = "false"
+    end
+    
     return specvars
 end
 
@@ -316,11 +581,17 @@ function main(package)
     end
 
     cprint("packing %s", package:outputfile())
+    
+    -- Check if this is a Qt project and inform the user
+    local is_qt = _is_qt_project(package)
+    if is_qt then
+        cprint("Qt project detected - including Qt runtime libraries in MSI")
+    end
 
     -- get wix
     local wix, oldenvs = _get_wix()
 
-    -- pack nsis package
+    -- pack wix package
     _pack_wix(wix.program, package)
 
     -- done
