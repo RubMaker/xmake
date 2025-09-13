@@ -105,44 +105,7 @@ function _is_qt_project(package)
         end
     end
 
-    -- Method 2: Check executable for Qt dependencies using ldd/objdump on Windows
-    local main_executable = nil
-    
-    -- Try to find the main executable path
-    local install_rootdir = package:install_rootdir()
-    if install_rootdir then
-        local bin_dir = path.join(install_rootdir, "bin")
-        if os.isdir(bin_dir) then
-            local exe_path = path.join(bin_dir, package:name() .. ".exe")
-            if os.isfile(exe_path) then
-                main_executable = exe_path
-            end
-        end
-    end
-    
-    -- If we couldn't find it in install dir, check if it exists in build output
-    if not main_executable then
-        local outputfile = package:outputfile()
-        if outputfile and os.isfile(outputfile) then
-            main_executable = outputfile
-        end
-    end
-    
-    if main_executable and os.isfile(main_executable) then
-        print("Checking executable for Qt dependencies:", main_executable)
-        -- Use objdump or dumpbin to check dependencies on Windows
-        local objdump_output = os.iorunv("objdump", {"-p", main_executable})
-        if objdump_output then
-            if objdump_output:lower():find("qt5") or 
-               objdump_output:lower():find("qt6") or
-               objdump_output:lower():find("libqt") then
-                print("Qt project detected via objdump analysis")
-                return true
-            end
-        end
-    end
-
-    -- Method 3: Check source files for Qt headers/includes
+    -- Method 2: Check source files for Qt headers/includes
     local srcfiles, _ = package:sourcefiles()
     for _, srcfile in ipairs(srcfiles or {}) do
         if srcfile:endswith(".cpp") or srcfile:endswith(".cc") or srcfile:endswith(".cxx") then
