@@ -50,6 +50,28 @@ function _get_wix()
     return wix, oldenvs
 end
 
+-- get windeployqt tool for Qt applications
+function _get_windeployqt()
+    local windeployqt = find_tool("windeployqt")
+    if not windeployqt then
+        -- Try to find it in Qt installation
+        local qt = find_qt()
+        if qt and qt.bindir then
+            local windeployqt_path = path.join(qt.bindir, "windeployqt.exe")
+            if os.isfile(windeployqt_path) then
+                windeployqt = {program = windeployqt_path}
+            end
+        end
+        
+        if not windeployqt then
+            print("Warning: windeployqt not found. Qt dependencies may not be bundled correctly.")
+            print("Make sure Qt development tools are installed and windeployqt is in PATH.")
+            return nil
+        end
+    end
+    return windeployqt
+end
+
 -- detect if this is a Qt project
 function _is_qt_project(package)
     -- Method 1: Check for Qt libraries in links
@@ -75,19 +97,7 @@ function _is_qt_project(package)
     end
 
     -- Method 3: Check executable for Qt dependencies (Windows-specific using dumpbin if available)
-    local main_executable = nil
-    
-    -- Try to find the main executable path
-    local install_rootdir = package:install_rootdir()
-    if install_rootdir then
-        local bin_dir = path.join(install_rootdir, "bin")
-        if os.isdir(bin_dir) then
-            local exe_path = path.join(bin_dir, package:name() .. ".exe")
-            if os.isfile(exe_path) then
-                main_executable = exe_path
-            end
-        end
-    end
+    local main_executable = _find_main_executable(package)
     
     if main_executable and os.isfile(main_executable) then
         print("Checking executable for Qt dependencies:", main_executable)
@@ -129,12 +139,234 @@ function _is_qt_project(package)
     return false
 end
 
--- collect Qt DLLs for Windows packaging
+-- find main executable
+function _find_main_executable(package)
+    -- Try to find the main executable path
+    local install_rootdir = package:install_rootdir()
+    if install_rootdir then
+        local bin_dir = path.join(install_rootdir, "bin")
+        if os.isdir(bin_dir) then
+            local exe_path = path.join(bin_dir, package:name() .. ".exe")
+            if os.isfile(exe_path) then
+                return exe_path
+            end
+        end
+    end
+
+    -- Alternative: check build directory
+    local plat = os.host()
+    local arch = os.arch()
+    local mode = is_mode("debug") and "debug" or "release"
+    
+    local possible_paths = {
+        path.join("build", plat, arch, mode, package:name() .. ".exe"),
+        path.join("build", plat, arch, "release", package:name() .. ".exe"),
+        path.join("build", plat, "release", package:name() .. ".exe"),
+        path.join("build", "release", package:name() .. ".exe"),
+        path.join("build", package:name() .. ".exe"),
+    }
+    
+    for _, exe_path in ipairs(possible_paths) do
+        if os.isfile(exe_path) then
+            return path.absolute(exe_path)
+        end
+    end
+    
+    return nil
+end
+
+-- deploy Qt dependencies using windeployqt
+function _deploy_qt_dependencies(package, windeployqt)
+    print("Deploying Qt dependencies using windeployqt...")
+    
+    local main_executable = _find_main_executable(package)
+    if not main_executable then
+        print("Error: Cannot find main executable for Qt deployment")
+        return false, {}
+    end
+    
+    print("Main executable found:", main_executable)
+    
+    -- Create a temporary deployment directory
+    local deploy_dir = path.join(os.tmpdir(), package:name() .. "_qt_deploy")
+    if os.isdir(deploy_dir) then
+        os.vrunv("rmdir", {"/s", "/q", deploy_dir})
+    end
+    os.mkdir(deploy_dir)
+    
+    -- Copy the main executable to deployment directory
+    local deployed_exe = path.join(deploy_dir, path.filename(main_executable))
+    os.cp(main_executable, deployed_exe)
+    print("Copied executable to deployment directory:", deployed_exe)
+    
+    -- Get Qt SDK information
+    local qt = find_qt()
+    if not qt then
+        print("Warning: Qt SDK not found, cannot determine Qt version")
+        return false, {}
+    end
+
+    print("Qt SDK directory:", qt.sdkdir)
+    print("Qt binary directory:", qt.bindir)
+    print("Qt version:", qt.sdkver or "unknown")
+    
+    -- Set up environment variables for windeployqt
+    local envs = {}
+    if qt.bindir then
+        envs.PATH = qt.bindir .. ";" .. (os.getenv("PATH") or "")
+    end
+    if qt.sdkdir then
+        envs.QTDIR = qt.sdkdir
+    end
+
+    -- Build windeployqt arguments
+    local args = {
+        deployed_exe,
+        "--verbose", "2",
+        "--dir", deploy_dir,
+        "--debug-info",
+        "--compiler-runtime"
+    }
+    
+    -- Check if this is a QML project
+    local uses_qml = _check_qml_usage(package)
+    if uses_qml then
+        table.insert(args, "--qmldir")
+        local qml_dir = _find_project_qml_dir()
+        if qml_dir then
+            table.insert(args, qml_dir)
+        else
+            -- Use Qt's QML directory if available
+            if qt.qmldir and os.isdir(qt.qmldir) then
+                table.insert(args, qt.qmldir)
+            else
+                -- Remove the --qmldir flag if no valid directory found
+                table.remove(args)  -- remove qml_dir placeholder
+                table.remove(args)  -- remove --qmldir
+                print("Warning: QML usage detected but no valid QML directory found")
+            end
+        end
+    end
+
+    print("Running windeployqt with command:")
+    print("  Program:", windeployqt.program)
+    print("  Args:", table.concat(args, " "))
+    
+    -- Execute windeployqt
+    print("Executing windeployqt...")
+    local ok, err = os.iorunv(windeployqt.program, args, {envs = envs})
+    if not ok then
+        print("Error: windeployqt failed:", err or "unknown error")
+        return false, {}
+    end
+
+    print("windeployqt completed successfully")
+    
+    -- Collect all deployed files
+    local qt_files = {}
+    local function collect_files(dir, base_dir)
+        base_dir = base_dir or dir
+        local files = os.files(path.join(dir, "*"))
+        local dirs = os.dirs(path.join(dir, "*"))
+        
+        -- Add files
+        for _, file in ipairs(files) do
+            local rel_path = path.relative(file, base_dir)
+            table.insert(qt_files, {file, rel_path})
+        end
+        
+        -- Recursively add subdirectories
+        for _, subdir in ipairs(dirs) do
+            collect_files(subdir, base_dir)
+        end
+    end
+    
+    collect_files(deploy_dir)
+    
+    print("Collected deployed Qt files:", #qt_files)
+    for _, file_info in ipairs(qt_files) do
+        print("  " .. file_info[2] .. " -> " .. file_info[1])
+    end
+    
+    return true, qt_files
+end
+
+-- Check if the project uses QML
+function _check_qml_usage(package)
+    -- Method 1: Check for QML-related libraries in links
+    local links = package:get("links") or {}
+    for _, link in ipairs(links) do
+        if link:lower():find("qml") or link:lower():find("quick") then
+            print("QML usage detected via link:", link)
+            return true
+        end
+    end
+
+    -- Method 2: Check for .qml files in project
+    local qml_files = os.files("**.qml")
+    if qml_files and #qml_files > 0 then
+        print("QML usage detected via .qml files:", #qml_files, "files found")
+        return true
+    end
+
+    -- Method 3: Check source files for QML-related includes
+    local srcfiles, _ = package:sourcefiles()
+    for _, srcfile in ipairs(srcfiles or {}) do
+        if srcfile:endswith(".cpp") or srcfile:endswith(".cc") or srcfile:endswith(".cxx") then
+            if os.isfile(srcfile) then
+                local content = io.readfile(srcfile)
+                if content and (content:find("#include.*QQml") or 
+                               content:find("#include.*QQuick") or
+                               content:find("QQmlEngine") or
+                               content:find("QQuickView")) then
+                    print("QML usage detected via source file analysis:", srcfile)
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Find project QML directory
+function _find_project_qml_dir()
+    local possible_qml_dirs = {"qml", "src/qml", "resources/qml", "assets/qml"}
+    
+    for _, qml_dir in ipairs(possible_qml_dirs) do
+        if os.isdir(qml_dir) then
+            print("Found project QML directory:", qml_dir)
+            return path.absolute(qml_dir)
+        end
+    end
+    
+    return nil
+end
+
+-- collect Qt files after windeployqt (legacy function for compatibility)
 function _collect_qt_dlls(package, is_qt)
     if not is_qt then
         return {}
     end
     
+    print("Using windeployqt for Qt dependency collection...")
+    local windeployqt = _get_windeployqt()
+    if not windeployqt then
+        print("windeployqt not available, falling back to manual DLL collection")
+        return _collect_qt_dlls_manual(package)
+    end
+    
+    local success, qt_files = _deploy_qt_dependencies(package, windeployqt)
+    if success then
+        return qt_files
+    else
+        print("windeployqt failed, falling back to manual DLL collection")
+        return _collect_qt_dlls_manual(package)
+    end
+end
+
+-- Manual Qt DLL collection (fallback)
+function _collect_qt_dlls_manual(package)
     local qt_dlls = {}
     local qt = find_qt()
     
@@ -230,14 +462,41 @@ function _collect_qt_dlls(package, is_qt)
             end
         end
         
-        -- Also include Qt platform plugin DLL (essential for Qt apps on Windows)
-        local platforms_dir = path.join(qt.pluginsdir or path.join(qt.sdkdir, "plugins"), "platforms")
-        if os.isdir(platforms_dir) then
-            local platform_dll = path.join(platforms_dir, "qwindows.dll")
-            if os.isfile(platform_dll) then
-                table.insert(qt_dlls, {platform_dll, "platforms/qwindows.dll"})
-                print("Found Qt platform plugin:", platform_dll)
+        -- CRITICAL: Add Qt platform plugin DLL (essential for Qt apps on Windows)
+        local plugins_dir = path.join(qt.sdkdir, "plugins")
+        if not os.isdir(plugins_dir) and qt.pluginsdir then
+            plugins_dir = qt.pluginsdir
+        end
+        
+        if os.isdir(plugins_dir) then
+            local platforms_dir = path.join(plugins_dir, "platforms")
+            if os.isdir(platforms_dir) then
+                local platform_dll = path.join(platforms_dir, "qwindows.dll")
+                if os.isfile(platform_dll) then
+                    table.insert(qt_dlls, {platform_dll, "platforms/qwindows.dll"})
+                    print("Found Qt platform plugin:", platform_dll)
+                else
+                    print("Warning: qwindows.dll not found in", platforms_dir)
+                end
+            else
+                print("Warning: platforms directory not found:", platforms_dir)
             end
+            
+            -- Add other important plugins
+            local plugin_types = {"imageformats", "iconengines", "styles"}
+            for _, plugin_type in ipairs(plugin_types) do
+                local plugin_dir = path.join(plugins_dir, plugin_type)
+                if os.isdir(plugin_dir) then
+                    local plugin_files = os.files(path.join(plugin_dir, "*.dll"))
+                    for _, plugin_file in ipairs(plugin_files) do
+                        local rel_path = plugin_type .. "/" .. path.filename(plugin_file)
+                        table.insert(qt_dlls, {plugin_file, rel_path})
+                        print("Found Qt plugin:", plugin_file)
+                    end
+                end
+            end
+        else
+            print("Warning: Qt plugins directory not found:", plugins_dir)
         end
         
     else
@@ -409,40 +668,41 @@ function _build_feature(package, opt)
 end
 
 -- build Qt runtime feature
-function _build_qt_feature(package, qt_dlls)
-    if #qt_dlls == 0 then
+function _build_qt_feature(package, qt_files)
+    if #qt_files == 0 then
         return {}
     end
     
     local result = {}
-    table.insert(result, _get_feature_string("QtRuntime", "Qt Runtime Libraries", {default = true, force = true, description = "Qt runtime libraries required by the application"}))
+    table.insert(result, _get_feature_string("QtRuntime", "Qt Runtime Libraries", {default = true, force = true, description = "Qt runtime libraries and plugins required by the application"}))
     
-    -- Group DLLs by directory
-    local dll_groups = {}
-    for _, dll_info in ipairs(qt_dlls) do
-        local srcfile = dll_info[1]
-        local dstname = dll_info[2]
+    -- Group files by directory
+    local file_groups = {}
+    for _, file_info in ipairs(qt_files) do
+        local srcfile = file_info[1]
+        local dstname = file_info[2]
         local dstdir = path.directory(dstname)
         
         if dstdir == "." or dstdir == "" then
             dstdir = "bin"  -- Main executable directory
         end
         
-        if not dll_groups[dstdir] then
-            dll_groups[dstdir] = {}
+        if not file_groups[dstdir] then
+            file_groups[dstdir] = {}
         end
-        table.insert(dll_groups[dstdir], {srcfile, path.filename(dstname)})
+        table.insert(file_groups[dstdir], {srcfile, path.filename(dstname)})
     end
     
     -- Create components for each directory
-    for dir, files in pairs(dll_groups) do
+    for dir, files in pairs(file_groups) do
         local component_id = _get_id("QtRuntime" .. dir)
-        table.insert(result, _get_component_string(component_id, dir))
+        local subdir = (dir ~= "bin" and dir ~= ".") and dir or nil
+        table.insert(result, _get_component_string(component_id, subdir))
         
         for _, file_info in ipairs(files) do
             local srcfile = file_info[1]
             local filename = file_info[2]
-            local file_id = _get_id("QtDLL" .. filename)
+            local file_id = _get_id("QtFile" .. filename .. dir)
             table.insert(result, string.format([[<File Source="%s" Name="%s" Id="%s"/>]], srcfile, filename, file_id))
         end
         
@@ -467,7 +727,7 @@ end
 -- get specvars
 function _get_specvars(package)
     local is_qt = _is_qt_project(package)
-    local qt_dlls = _collect_qt_dlls(package, is_qt)
+    local qt_files = _collect_qt_dlls(package, is_qt)
     
     local installcmds = batchcmds.get_installcmds(package):cmds()
     local specvars = table.clone(package:specvars())
@@ -476,9 +736,9 @@ function _get_specvars(package)
     table.join2(features, _build_feature(package, {default = true, force = true, config_dir = true}))
     
     -- Add Qt runtime feature if this is a Qt project
-    if is_qt and #qt_dlls > 0 then
+    if is_qt and #qt_files > 0 then
         print("Adding Qt runtime libraries to MSI package")
-        table.join2(features, _build_qt_feature(package, qt_dlls))
+        table.join2(features, _build_qt_feature(package, qt_files))
     end
     
     table.join2(features, _add_to_path(package))
@@ -585,7 +845,15 @@ function main(package)
     -- Check if this is a Qt project and inform the user
     local is_qt = _is_qt_project(package)
     if is_qt then
-        cprint("Qt project detected - including Qt runtime libraries in MSI")
+        cprint("Qt project detected - using windeployqt for proper dependency deployment")
+        
+        -- Deploy Qt dependencies first
+        local windeployqt = _get_windeployqt()
+        if windeployqt then
+            print("Found windeployqt, proceeding with Qt deployment...")
+        else
+            cprint("Warning: windeployqt not found - Qt dependencies may not work correctly")
+        end
     end
 
     -- get wix
@@ -596,4 +864,9 @@ function main(package)
 
     -- done
     os.setenvs(oldenvs)
+    
+    if is_qt then
+        cprint("MSI package created with Qt runtime dependencies")
+        cprint("The packaged application should now run correctly on target systems")
+    end
 end
