@@ -56,6 +56,52 @@ function _check_makensis(program)
     os.tryrm(tmpdir)
 end
 
+-- safe directory removal for Windows
+local function _safe_rmdir(dir)
+    if not os.isdir(dir) then
+        return true
+    end
+    
+    -- Try multiple methods to remove directory
+    local ok = false
+    
+    -- Method 1: Use os.tryrm first
+    ok = os.tryrm(dir)
+    if ok then
+        print("Successfully removed directory using os.tryrm:", dir)
+        return true
+    end
+    
+    -- Method 2: Try Windows rmdir command
+    if is_host("windows") then
+        print("Trying Windows rmdir command for:", dir)
+        local ok2 = try { function() 
+            os.vrunv("cmd", {"/c", "rmdir", "/s", "/q", path.translate(dir)})
+            return true
+        end }
+        if ok2 then
+            print("Successfully removed directory using rmdir:", dir)
+            return true
+        end
+    end
+    
+    -- Method 3: Try PowerShell Remove-Item
+    if is_host("windows") then
+        print("Trying PowerShell Remove-Item for:", dir)
+        local ok3 = try { function()
+            os.vrunv("powershell", {"-Command", "Remove-Item -Recurse -Force '" .. dir .. "'"})
+            return true
+        end }
+        if ok3 then
+            print("Successfully removed directory using PowerShell:", dir)
+            return true
+        end
+    end
+    
+    print("Warning: Failed to remove directory:", dir)
+    return false
+end
+
 local function _log_deployed_files(deploy_dir)
     print("Deployed files and directories:")
     for _, file in ipairs(os.files(path.join(deploy_dir, "**"))) do
@@ -270,25 +316,46 @@ function _deploy_qt_dependencies(package, windeployqt)
     
     print("Main executable found:", main_executable)
     
-    -- Create a temporary deployment directory
-    local deploy_dir = path.join(os.tmpdir(), package:name() .. "_qt_nsis_deploy")
+    -- Create a unique temporary deployment directory
+    local deploy_dir = path.join(os.tmpdir(), package:name() .. "_qt_nsis_deploy_" .. os.time())
     print("Using temporary deployment directory:", deploy_dir)
+    
+    -- Remove existing directory if it exists
     if os.isdir(deploy_dir) then
-        print("1111111 Removing existing temporary directory:", deploy_dir)
-        os.vrunv("rm", {"-r", "-fo", deploy_dir})
+        print("Removing existing temporary directory:", deploy_dir)
+        _safe_rmdir(deploy_dir)
+        -- Wait a bit to ensure directory is removed
+        os.sleep(100)
     end
-    print("2222222 Creating temporary directory:", deploy_dir)
-    os.mkdir(deploy_dir)
+    
+    -- Create the deployment directory
+    print("Creating temporary directory:", deploy_dir)
+    if not os.mkdir(deploy_dir) then
+        print("Error: Failed to create deployment directory:", deploy_dir)
+        return {}
+    end
     
     -- Copy the main executable to deployment directory
     local deployed_exe = path.join(deploy_dir, path.filename(main_executable))
-    os.cp(main_executable, deployed_exe)
+    print("Copying executable to deployment directory...")
+    local copy_ok = try { function()
+        os.cp(main_executable, deployed_exe)
+        return true
+    end }
+    
+    if not copy_ok then
+        print("Error: Failed to copy executable to deployment directory")
+        _safe_rmdir(deploy_dir)
+        return {}
+    end
+    
     print("Copied executable to deployment directory:", deployed_exe)
     
     -- Get Qt SDK information
     local qt = find_qt()
     if not qt then
         print("Warning: Qt SDK not found")
+        _safe_rmdir(deploy_dir)
         return {}
     end
 
@@ -316,18 +383,16 @@ function _deploy_qt_dependencies(package, windeployqt)
     -- Check if this is a QML project
     local uses_qml = _check_qml_usage(package)
     if uses_qml then
-        table.insert(args, "--qmldir")
         local qml_dir = _find_project_qml_dir()
         if qml_dir then
+            table.insert(args, "--qmldir")
             table.insert(args, qml_dir)
         else
             -- Use Qt's QML directory if available
             if qt.qmldir and os.isdir(qt.qmldir) then
+                table.insert(args, "--qmldir")
                 table.insert(args, qt.qmldir)
             else
-                -- Remove the --qmldir flag if no valid directory found
-                table.remove(args) -- remove placeholder
-                table.remove(args) -- remove --qmldir
                 print("Warning: QML usage detected but no valid QML directory found")
             end
         end
@@ -337,16 +402,26 @@ function _deploy_qt_dependencies(package, windeployqt)
     print("  Program:", windeployqt.program)
     print("  Args:", table.concat(args, " "))
     
-    -- Execute windeployqt
+    -- Execute windeployqt with error handling
     print("Executing windeployqt...")
-    local ok, err = os.iorunv(windeployqt.program, args, {envs = envs})
+    local ok, err = try { function()
+        local result, err = os.iorunv(windeployqt.program, args, {envs = envs})
+        if not result then
+            print("windeployqt output error:", err or "unknown error")
+            return false
+        end
+        return true
+    end }
+    
     if not ok then
         print("Error: windeployqt failed:", err or "unknown error")
+        print("Falling back to manual deployment...")
+        _safe_rmdir(deploy_dir)
         return {}
     end
 
     print("windeployqt completed successfully")
-    -- 调用 _log_deployed_files 打印部署目录内容
+    -- Log deployed files
     _log_deployed_files(deploy_dir)
     
     -- Collect all deployed files and generate NSIS commands
@@ -395,7 +470,7 @@ Plugins = .
     print("Generated", #nsis_commands, "NSIS commands for Qt deployment")
     
     -- Clean up temporary deployment directory
-    os.tryrm(deploy_dir)
+    _safe_rmdir(deploy_dir)
     
     return nsis_commands
 end
@@ -632,8 +707,6 @@ function _get_uninstallcmds(package)
             '${unRMDirIfExists} "$InstDir\\styles"',
             '${unRMFileIfExists} "$InstDir\\bin\\qt.conf"',
         }
-
-        print("11111 Qt version for cleanup:", qt_version)
         
         -- Add version-specific cleanup
         if is_qt6 then
@@ -649,11 +722,10 @@ function _get_uninstallcmds(package)
             table.insert(qt_cleanup_commands, '${unRMFileIfExists} "$InstDir\\bin\\Qt5Network.dll"')
             table.insert(qt_cleanup_commands, '${unRMFileIfExists} "$InstDir\\bin\\Qt5Sql.dll"')
         end
-        print("22222 Qt cleanup commands:", table.concat(qt_cleanup_commands, "\n"))
         
         cmdstrs = cmdstrs .. "\n  ; Qt cleanup commands\n  " .. table.concat(qt_cleanup_commands, "\n  ")
     end
-    print("Final uninstall commands:\n", cmdstrs)
+    
     return cmdstrs
 end
 
