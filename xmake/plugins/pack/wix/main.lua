@@ -223,8 +223,7 @@ function _deploy_qt_dependencies(package, windeployqt)
     local args = {
         deployed_exe,
         "--verbose", "2",
-        "--dir", deploy_dir,
-        "--compiler-runtime"
+        "--dir", deploy_dir
     }
     
     -- Check if this is a QML project

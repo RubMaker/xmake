@@ -300,7 +300,6 @@ function _deploy_qt_dependencies(package, windeployqt)
         deployed_exe,
         "--verbose", "2",
         "--dir", deploy_dir,
-        "--compiler-runtime",
         "--force"
     }
     
