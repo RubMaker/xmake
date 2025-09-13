@@ -344,7 +344,7 @@ function _get_other_commands(package, cmd, opt)
     elseif kind == "mkdir" then
         local dir = _translate_filepath(package, cmd.dir)
         local subdirectory = dir ~= "." and string.format([[Subdirectory="%s"]], dir) or ""
-        result = string.format([[<CreateFolder Id="%s" Directory="INSTALLFOLDER" %s/>]], id, subdirectory)
+        result = string.format([[<CreateFolder Directory="INSTALLFOLDER" %s/>]], subdirectory)
     elseif kind == "wix" then
         result = cmd.rawstr
     end
