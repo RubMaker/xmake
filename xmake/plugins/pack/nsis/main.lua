@@ -632,6 +632,8 @@ function _get_uninstallcmds(package)
             '${unRMDirIfExists} "$InstDir\\styles"',
             '${unRMFileIfExists} "$InstDir\\bin\\qt.conf"',
         }
+
+        print("11111 Qt version for cleanup:", qt_version)
         
         -- Add version-specific cleanup
         if is_qt6 then
@@ -647,10 +649,11 @@ function _get_uninstallcmds(package)
             table.insert(qt_cleanup_commands, '${unRMFileIfExists} "$InstDir\\bin\\Qt5Network.dll"')
             table.insert(qt_cleanup_commands, '${unRMFileIfExists} "$InstDir\\bin\\Qt5Sql.dll"')
         end
+        print("22222 Qt cleanup commands:", table.concat(qt_cleanup_commands, "\n"))
         
         cmdstrs = cmdstrs .. "\n  ; Qt cleanup commands\n  " .. table.concat(qt_cleanup_commands, "\n  ")
     end
-    
+    print("Final uninstall commands:\n", cmdstrs)
     return cmdstrs
 end
 
