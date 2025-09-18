@@ -20,6 +20,7 @@
 
 -- imports
 import("core.base.json")
+import("core.base.bytes")
 import("core.base.option")
 import("core.base.semver")
 import("utils.progress")
@@ -31,13 +32,45 @@ import("support")
 import(".mapper")
 import(".builder", {inherit = true})
 
+function _get_bmifile(target, module)
+    local has_reduced_bmi = support.get_modulesreducedbmiflag(target)
+    local has_two_phases = target:policy("build.c++.modules.two_phases")
+    -- disabled with two phases currently, LLVM currently have a bug which prevent to emit reduced bmi when using two phase compilation
+    -- will be enabled after the fix
+    local add_reduced_flag = not has_two_phases and has_reduced_bmi
+    local bmifile = module.bmifile
+
+    if has_two_phases and add_reduced_flag then
+        bmifile = path.join(path.directory(module.bmifile), "reduced." .. path.filename(module.bmifile))
+    end
+
+    return bmifile, add_reduced_flag
+end
+
+function _update_bmihash(target, module)
+    local localcache = support.localcache()
+
+    local bmifile = _get_bmifile(target, module)
+    local bmihash = hash.xxhash128(bytes(io.readfile(bmifile)))
+    local old_bmihash = localcache:get2(bmifile, "hash")
+
+    if not old_bmihash or bmihash ~= old_bmihash then
+        localcache:set2(bmifile, "hash", bmihash)
+        support.memcache():set2(bmifile, "updated", true)
+    end
+end
+
 function _make_modulebuildflags(target, module, opt)
     assert(not module.headerunit)
+
+    local modules_reduced_bmi_flag = support.get_modulesreducedbmiflag(target)
+    local has_two_phases = target:policy("build.c++.modules.two_phases")
     local flags
     if opt.bmi then
         local module_outputflag = support.get_moduleoutputflag(target)
 
         flags = {"-x", "c++-module"}
+
         if not opt.objectfile then
             table.insert(flags, "--precompile")
             if target:has_tool("cxx", "clang_cl") then
@@ -48,9 +81,20 @@ function _make_modulebuildflags(target, module, opt)
         if std then
             table.join2(flags, {"-Wno-include-angled-in-module-purview", "-Wno-reserved-module-identifier", "-Wno-deprecated-declarations"})
         end
-        table.insert(flags, module_outputflag .. module.bmifile)
+
+        local bmifile, add_reduced_flag = _get_bmifile(target, module)
+        if add_reduced_flag then
+            table.insert(flags, modules_reduced_bmi_flag)
+        end
+
+        if not has_two_phases or add_reduced_flag  then
+            table.insert(flags, module_outputflag .. bmifile)
+        end
     else
-        flags = {"-x", "c++"}
+        flags = {}
+        if not has_two_phases or not module.bmifile then
+            flags = {"-x", "c++"}
+        end
         local std = (module.name == "std" or module.name == "std.compat")
         if std then
             table.join2(flags, {"-Wno-include-angled-in-module-purview", "-Wno-reserved-module-identifier", "-Wno-deprecated-declarations"})
@@ -104,22 +148,43 @@ function _make_headerunitflags(target, headerunit)
     return flags
 end
 
+
+function _get_mapper_str(target, module, opt)
+    local mapper_str
+    if target:policy("build.c++.modules.hide_dependencies") and option.get("diagnosis") then
+        if not opt.headerunit then
+            local requires_flagsfile = target:autogenfile(module.sourcefile .. ".requiresflags.txt")
+            if os.isfile(requires_flagsfile) then
+                if module.name then
+                    mapper_str = format("\n${dim color.warning}mapper file for %s (%s) --------\n%s\n--------", module.name, module.sourcefile, io.readfile(requires_flagsfile):trim())
+                else
+                    mapper_str = format("\n${dim color.warning}mapper file for %s --------\n%s\n--------", module.sourcefile, io.readfile(requires_flagsfile):trim())
+                end
+            end
+        end
+    end
+    return mapper_str
+end
+
 -- do compile
 function _compile(target, flags, module, opt)
 
     opt = opt or {}
     local sourcefile = module.sourcefile
+    if not opt.bmi and opt.objectfile and module.bmifile then
+        sourcefile = module.bmifile
+    end
     local outputfile = ((opt.bmi and not opt.objectfile) or opt.headerunit) and module.bmifile or module.objectfile
     local dryrun = option.get("dry-run")
     local compinst = target:compiler("cxx")
-    local compflags = compinst:compflags({sourcefile = sourcefile, target = target, sourcekind = "cxx"})
+    local compflags = compinst:compflags({sourcefile = module.sourcefile, target = target, sourcekind = "cxx"})
     flags = table.join(compflags or {}, flags or {})
     -- trace
     local cmd
     if option.get("verbose") then
         cmd = "\n" .. compinst:compcmd(sourcefile, outputfile, {target = target, compflags = flags, sourcekind = "cxx", rawargs = true})
     end
-    show_progress(target, module, table.join(opt, {cmd = cmd}))
+    show_progress(target, module, table.join(opt, {cmd = cmd, suffix = _get_mapper_str(target, module, opt)}))
 
     -- do compile
     if not dryrun then
@@ -134,7 +199,7 @@ function _batchcmds_compile(batchcmds, target, flags, module, opt)
     local sourcefile = module.sourcefile
     local outputfile = (opt.bmi and not opt.objectfile) and module.bmifile or module.objectfile
     local compinst = target:compiler("cxx")
-    local compflags = compinst:compflags({sourcefile = sourcefile, target = target, sourcekind = "cxx"})
+    local compflags = compinst:compflags({sourcefile = module.sourcefile, target = target, sourcekind = "cxx"})
     flags = table.join("-c", compflags or {}, flags or {}, {"-o", outputfile, sourcefile})
 
     -- trace
@@ -142,7 +207,7 @@ function _batchcmds_compile(batchcmds, target, flags, module, opt)
     if option.get("verbose") then
         cmd = "\n" .. compinst:compcmd(sourcefile, outputfile, {target = target, compflags = flags, sourcekind = "cxx", rawargs = true})
     end
-    show_progress(target, module, table.join(opt, {cmd = cmd, batchcmds = batchcmds}))
+    show_progress(target, module, table.join(opt, {cmd = cmd, batchcmds = batchcmds, suffix = _get_mapper_str(target, module, opt)}))
 
     -- do compile
     batchcmds:compilev(flags, {compiler = compinst, sourcekind = "cxx", verbose = false})
@@ -175,7 +240,8 @@ function _get_requiresflags(target, module)
             local dep_module = mapper.get(target, required)
             assert(dep_module, "module dependency %s required for %s not found", required, name)
 
-            local mapflag = dep_module.headerunit and modulefileflag .. dep_module.bmifile or format("%s%s=%s", modulefileflag, required, dep_module.bmifile)
+            local dep_bmifile, _ = dep.headerunit and dep_module.bmifile or _get_bmifile(target, dep_module)
+            local mapflag = dep_module.headerunit and modulefileflag .. dep_bmifile or format("%s%s=%s", modulefileflag, required, dep_bmifile)
             table.insert(requiresflags, mapflag)
 
             -- append deps
@@ -194,15 +260,29 @@ end
 function _append_requires_flags(target, module)
     local cxxflags = {}
     local requiresflags = _get_requiresflags(target, module)
-    for _, flag in ipairs(requiresflags) do
-        -- we need to wrap flag to support flag with space
-        if type(flag) == "string" and flag:find(" ", 1, true) then
-            table.insert(cxxflags, {flag})
+    local has_two_phases = target:policy("build.c++.modules.two_phases")
+    local hide_dependencies = target:policy("build.c++.modules.hide_dependencies")
+    if #requiresflags> 0 then
+        for _, flag in ipairs(requiresflags) do
+            -- we need to wrap flag to support flag with space
+            if type(flag) == "string" and flag:find(" ", 1, true) and not hide_dependencies then
+                table.insert(cxxflags, {flag})
+            else
+                if hide_dependencies then
+                    table.insert(cxxflags, '"' .. path.unix(flag) .. '"')
+                else
+                    table.insert(cxxflags, flag)
+                end
+            end
+        end
+        if hide_dependencies then
+            local requires_flagsfile = target:autogenfile(module.sourcefile .. ".requiresflags.txt")
+            io.writefile(requires_flagsfile, path.unix(table.concat(cxxflags, "\n")))
+            target:fileconfig_add(module.sourcefile, {force = {cxxflags = {{"@" .. requires_flagsfile}}}})
         else
-            table.insert(cxxflags, flag)
+            target:fileconfig_add(module.sourcefile, {force = {cxxflags = cxxflags}})
         end
     end
-    target:fileconfig_add(module.sourcefile, {force = {cxxflags = cxxflags}})
 end
 
 function append_requires_flags(target, built_modules)
@@ -219,10 +299,22 @@ end
 function make_module_job(target, module, opt)
 
     local dryrun = option.get("dry-run")
+    local enable_hash_comparison = target:policy("build.c++.modules.non_cascading_changes")
 
-    local build = should_build(target, module)
+    local build, because_of_dependencies = should_build(target, module)
     local bmi = opt and opt.bmi
     local objectfile = opt and opt.objectfile
+
+    if build and enable_hash_comparison and because_of_dependencies then
+        build = false
+        for dep_name, dep_module in table.orderpairs(module.deps) do
+            local mapped_dep = mapper.get(target, dep_module.headerunit and dep_name .. dep_module.key or dep_name)
+            if support.memcache():get2(_get_bmifile(target, dep_module), "updated") then
+                build = true
+                break
+            end
+        end
+    end
 
     if build then
         if not dryrun then
@@ -248,6 +340,10 @@ function make_module_job(target, module, opt)
             else
                 os.tryrm(module.objectfile) -- force rebuild for .cpp files
             end
+        end
+
+        if enable_hash_comparison and bmi then
+            _update_bmihash(target, module)
         end
     end
 end

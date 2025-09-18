@@ -44,7 +44,6 @@ rule("wdk.man")
         if not os.isexec(ctrpp) then
             ctrpp = path.join(wdk.bindir, wdk.sdkver, arch, "ctrpp.exe")
         end
-        assert(os.isexec(ctrpp), "ctrpp not found!")
 
         -- save ctrpp
         target:data_set("wdk.ctrpp", ctrpp)
@@ -61,6 +60,7 @@ rule("wdk.man")
 
         -- get ctrpp
         local ctrpp = target:data("wdk.ctrpp")
+        assert(ctrpp and os.isexec(ctrpp), "ctrpp not found!")
 
         -- get output directory
         local outputdir = path.join(target:autogendir(), "rules", "wdk", "man")
@@ -123,6 +123,13 @@ rule("wdk.man")
             os.mkdir(outputdir)
         end
         os.vrunv(ctrpp, args)
+
+        if target:has_tool("cxx", "clang", "clangxx") then
+            if resourcefile and os.isfile(resourcefile) then
+                local content = io.readfile(resourcefile)
+                io.writefile(resourcefile, content, {encoding = "utf8"})
+            end
+        end
 
         -- update files and values to the dependent file
         dependinfo.files  = {sourcefile}
